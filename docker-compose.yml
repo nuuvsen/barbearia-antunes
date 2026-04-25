@@ -1,0 +1,8 @@
+version: '3.8'
+services:
+  barbearia:
+    build: .
+    container_name: barbearia_app
+    ports:
+      - "8080:80"
+    restart: always
