@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, deleteDoc } from 'firebase/firestore'
+import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, deleteDoc, limit } from 'firebase/firestore'
 import { Info } from 'lucide-react'
 
 const MAPA_DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
@@ -80,17 +80,38 @@ export default function Cliente({ servicos }) {
   useEffect(() => {
     const buscarNomeCliente = async () => {
       const tel = contato.telefone.trim()
+      // Funciona no agendamento normal
       if (tel.length >= 10 && modo === 'agendamento') {
         try {
+          // TENTATIVA 1: Procura na lista de Assinantes (coleção "clientes")
           const docSnap = await getDoc(doc(db, "clientes", tel))
           if (docSnap.exists() && docSnap.data().nome) {
             setContato(prev => ({ ...prev, nome: docSnap.data().nome }))
+            return; // Se achou, para por aqui
+          }
+
+          // TENTATIVA 2: Procura no histórico de cortes antigos (coleção "agendamentos")
+          const q = query(
+            collection(db, "agendamentos"), 
+            where("clienteTelefone", "==", tel), 
+            limit(1) // Pega só o mais recente para ser bem rápido
+          )
+          const snap = await getDocs(q)
+          
+          if (!snap.empty) {
+            // Atenção: no agendamento salvamos como 'clienteNome'
+            const nomeAntigo = snap.docs[0].data().clienteNome;
+            if (nomeAntigo) {
+              setContato(prev => ({ ...prev, nome: nomeAntigo }))
+            }
           }
         } catch (error) {
           console.error("Erro ao buscar nome:", error)
         }
       }
     }
+    
+    // Espera o cliente parar de digitar por 600ms para fazer a busca
     const delayId = setTimeout(buscarNomeCliente, 600)
     return () => clearTimeout(delayId)
   }, [contato.telefone, modo])
