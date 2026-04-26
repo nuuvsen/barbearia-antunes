@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-// Importando ícones do Lucide para um visual mais moderno e consistente
 import { 
   LayoutDashboard, 
   Clock, 
@@ -12,7 +11,8 @@ import {
   Menu, 
   X, 
   ChevronRight,
-  LogOut 
+  LogOut,
+  Settings // Novo ícone
 } from 'lucide-react'
 
 import AdminDashboard from './AdminDashboard'
@@ -22,12 +22,12 @@ import AdminClientes from './AdminClientes'
 import AdminPlanos from './AdminPlanos'
 import AdminGerencia from './AdminGerencia'
 import AdminAgenda from './AdminAgenda'
+import AdminConfiguracoes from './AdminConfiguracoes' // Novo componente
 
 export default function Admin({ servicos, aoMudar }) {
   const [abaAtiva, setAbaAtiva] = useState('dashboard')
   const [sidebarAberta, setSidebarAberta] = useState(false)
 
-  // Função para mudar de aba e fechar a sidebar no mobile automaticamente
   const navegarPara = (id) => {
     setAbaAtiva(id)
     setSidebarAberta(false)
@@ -51,7 +51,6 @@ export default function Admin({ servicos, aoMudar }) {
   return (
     <div className="flex min-h-screen bg-[#050505] text-white overflow-hidden">
       
-      {/* 1. OVERLAY PARA MOBILE */}
       {sidebarAberta && (
         <div 
           className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] md:hidden transition-all duration-300"
@@ -59,7 +58,6 @@ export default function Admin({ servicos, aoMudar }) {
         />
       )}
 
-      {/* 2. ASIDE (SIDEBAR) RESPONSIVA */}
       <aside className={`
         fixed inset-y-0 left-0 z-[70] w-72 bg-[#0a0a0a] border-r border-[#1f1f1f] flex flex-col p-6
         transform transition-transform duration-300 ease-in-out
@@ -70,7 +68,6 @@ export default function Admin({ servicos, aoMudar }) {
           <h2 className="text-2xl font-black italic text-white uppercase tracking-tighter">
             Antunes<span className="text-red-600">.OS</span>
           </h2>
-          {/* Botão de fechar visível apenas no mobile */}
           <button onClick={() => setSidebarAberta(false)} className="md:hidden text-gray-500 hover:text-white">
             <X size={24} />
           </button>
@@ -83,8 +80,10 @@ export default function Admin({ servicos, aoMudar }) {
           <NavItem id="barbeiros" label="Barbeiros" icon={UserCircle} />
           <NavItem id="clientes" label="Clientes" icon={Users} />
           <NavItem id="planos" label="Planos" icon={Gem} />
+          <NavItem id="gerencia" label="Gerência" icon={BarChart3} />
+          
           <div className="pt-4 mt-4 border-t border-[#1f1f1f]">
-            <NavItem id="gerencia" label="Gerência" icon={BarChart3} />
+            <NavItem id="configuracoes" label="Configurações" icon={Settings} />
           </div>
         </nav>
 
@@ -95,24 +94,20 @@ export default function Admin({ servicos, aoMudar }) {
         </div>
       </aside>
 
-      {/* 3. CONTEÚDO PRINCIPAL */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        
-        {/* HEADER MOBILE (Botão Hamburguer) */}
         <header className="md:hidden p-4 bg-[#0a0a0a] border-b border-[#1f1f1f] flex items-center justify-between">
           <button 
             onClick={() => setSidebarAberta(true)}
-            className="p-3 bg-[#111] border border-[#1f1f1f] rounded-xl text-white active:scale-95 transition-transform"
+            className="p-3 bg-[#111] border border-[#1f1f1f] rounded-xl text-white"
           >
             <Menu size={24} />
           </button>
           <h2 className="text-sm font-black italic uppercase tracking-tighter">
             Antunes<span className="text-red-600">.OS</span>
           </h2>
-          <div className="w-12"></div> {/* Spacer para centralizar o título */}
+          <div className="w-12"></div>
         </header>
 
-        {/* ÁREA DE SCROLL DOS COMPONENTES */}
         <div className="flex-1 overflow-y-auto p-4 md:p-10 custom-scrollbar animate-in fade-in duration-500">
           {abaAtiva === 'dashboard' && <AdminDashboard totalServicos={servicos.length} />}
           {abaAtiva === 'agenda' && <AdminAgenda />}
@@ -121,6 +116,7 @@ export default function Admin({ servicos, aoMudar }) {
           {abaAtiva === 'clientes' && <AdminClientes />}
           {abaAtiva === 'planos' && <AdminPlanos />}
           {abaAtiva === 'gerencia' && <AdminGerencia />}
+          {abaAtiva === 'configuracoes' && <AdminConfiguracoes />}
         </div>
       </main>
 
