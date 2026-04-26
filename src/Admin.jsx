@@ -1,5 +1,19 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+// Importando ícones do Lucide para um visual mais moderno e consistente
+import { 
+  LayoutDashboard, 
+  Clock, 
+  Scissors, 
+  UserCircle, 
+  Users, 
+  Gem, 
+  BarChart3, 
+  Menu, 
+  X, 
+  ChevronRight,
+  LogOut 
+} from 'lucide-react'
 
 import AdminDashboard from './AdminDashboard'
 import AdminServicos from './AdminServicos'
@@ -7,63 +21,107 @@ import AdminBarbeiros from './AdminBarbeiros'
 import AdminClientes from './AdminClientes'
 import AdminPlanos from './AdminPlanos'
 import AdminGerencia from './AdminGerencia'
-// 1. IMPORTANDO A NOVA TELA
 import AdminAgenda from './AdminAgenda'
-
-const IconCorte = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line></svg>
-const IconDash = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-const IconUser = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-const IconStats = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
-const IconPlanos = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M3 10a2 2 0 0 1 0 4"></path><path d="M21 10a2 2 0 0 0 0 4"></path><path d="M12 6v12" strokeDasharray="2 2"></path></svg>
-// 2. NOVO ÍCONE DE RELÓGIO PARA A AGENDA
-const IconRelogio = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-
 
 export default function Admin({ servicos, aoMudar }) {
   const [abaAtiva, setAbaAtiva] = useState('dashboard')
+  const [sidebarAberta, setSidebarAberta] = useState(false)
+
+  // Função para mudar de aba e fechar a sidebar no mobile automaticamente
+  const navegarPara = (id) => {
+    setAbaAtiva(id)
+    setSidebarAberta(false)
+  }
 
   const NavItem = ({ id, label, icon: Icon }) => (
     <button 
-      onClick={() => setAbaAtiva(id)} 
-      className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${abaAtiva === id ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-gray-500 hover:bg-[#1c1c1c]'}`}
+      onClick={() => navegarPara(id)} 
+      className={`w-full flex items-center gap-3 p-4 rounded-2xl transition-all font-black uppercase text-[10px] tracking-widest ${
+        abaAtiva === id 
+        ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' 
+        : 'text-gray-500 hover:bg-[#1c1c1c] hover:text-gray-300'
+      }`}
     >
-      <Icon /> <span className="font-bold text-sm">{label}</span>
+      <Icon size={20} /> 
+      <span className="flex-1 text-left">{label}</span>
+      {abaAtiva === id && <ChevronRight size={14} className="opacity-50" />}
     </button>
   )
 
   return (
-    <div className="flex min-h-screen bg-[#0a0a0a] text-white">
+    <div className="flex min-h-screen bg-[#050505] text-white overflow-hidden">
       
-      <aside className="w-64 bg-[#111111] border-r border-[#1f1f1f] flex flex-col p-6 sticky top-0 h-screen">
-        <div className="mb-10">
-          <h2 className="text-xl font-black italic text-red-600 uppercase tracking-tighter">Admin Panel</h2>
+      {/* 1. OVERLAY PARA MOBILE */}
+      {sidebarAberta && (
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] md:hidden transition-all duration-300"
+          onClick={() => setSidebarAberta(false)}
+        />
+      )}
+
+      {/* 2. ASIDE (SIDEBAR) RESPONSIVA */}
+      <aside className={`
+        fixed inset-y-0 left-0 z-[70] w-72 bg-[#0a0a0a] border-r border-[#1f1f1f] flex flex-col p-6
+        transform transition-transform duration-300 ease-in-out
+        ${sidebarAberta ? 'translate-x-0' : '-translate-x-full'}
+        md:relative md:translate-x-0
+      `}>
+        <div className="flex items-center justify-between mb-10">
+          <h2 className="text-2xl font-black italic text-white uppercase tracking-tighter">
+            Antunes<span className="text-red-600">.OS</span>
+          </h2>
+          {/* Botão de fechar visível apenas no mobile */}
+          <button onClick={() => setSidebarAberta(false)} className="md:hidden text-gray-500 hover:text-white">
+            <X size={24} />
+          </button>
         </div>
         
-        <nav className="flex-1 space-y-2">
-          <NavItem id="dashboard" label="Dashboard" icon={IconDash} />
-          {/* BOTÃO DA AGENDA AQUI */}
-          <NavItem id="agenda" label="Agenda & Horários" icon={IconRelogio} />
-          <NavItem id="servicos" label="Serviços" icon={IconCorte} />
-          <NavItem id="barbeiros" label="Barbeiros" icon={IconUser} />
-          <NavItem id="clientes" label="Clientes" icon={IconUser} />
-          <NavItem id="planos" label="Planos" icon={IconPlanos} />
-          <NavItem id="gerencia" label="Gerência" icon={IconStats} />
+        <nav className="flex-1 space-y-2 overflow-y-auto pr-2 custom-scrollbar">
+          <NavItem id="dashboard" label="Dashboard" icon={LayoutDashboard} />
+          <NavItem id="agenda" label="Agenda & Horários" icon={Clock} />
+          <NavItem id="servicos" label="Serviços" icon={Scissors} />
+          <NavItem id="barbeiros" label="Barbeiros" icon={UserCircle} />
+          <NavItem id="clientes" label="Clientes" icon={Users} />
+          <NavItem id="planos" label="Planos" icon={Gem} />
+          <div className="pt-4 mt-4 border-t border-[#1f1f1f]">
+            <NavItem id="gerencia" label="Gerência" icon={BarChart3} />
+          </div>
         </nav>
 
         <div className="mt-auto pt-6 border-t border-[#1f1f1f]">
-          <Link to="/" className="text-sm font-bold text-gray-500 hover:text-white transition-colors">← Sair do Painel</Link>
+          <Link to="/" className="flex items-center gap-3 p-3 text-xs font-black uppercase tracking-widest text-gray-600 hover:text-red-500 transition-colors">
+            <LogOut size={16} /> Sair do Painel
+          </Link>
         </div>
       </aside>
 
-      <main className="flex-1 p-10 overflow-y-auto">
-        {abaAtiva === 'dashboard' && <AdminDashboard totalServicos={servicos.length} />}
-        {/* EXIBIÇÃO DA TELA DE AGENDA AQUI */}
-        {abaAtiva === 'agenda' && <AdminAgenda />}
-        {abaAtiva === 'servicos' && <AdminServicos servicos={servicos} aoMudar={aoMudar} />}
-        {abaAtiva === 'barbeiros' && <AdminBarbeiros />}
-        {abaAtiva === 'clientes' && <AdminClientes />}
-        {abaAtiva === 'planos' && <AdminPlanos />}
-        {abaAtiva === 'gerencia' && <AdminGerencia />}
+      {/* 3. CONTEÚDO PRINCIPAL */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+        
+        {/* HEADER MOBILE (Botão Hamburguer) */}
+        <header className="md:hidden p-4 bg-[#0a0a0a] border-b border-[#1f1f1f] flex items-center justify-between">
+          <button 
+            onClick={() => setSidebarAberta(true)}
+            className="p-3 bg-[#111] border border-[#1f1f1f] rounded-xl text-white active:scale-95 transition-transform"
+          >
+            <Menu size={24} />
+          </button>
+          <h2 className="text-sm font-black italic uppercase tracking-tighter">
+            Antunes<span className="text-red-600">.OS</span>
+          </h2>
+          <div className="w-12"></div> {/* Spacer para centralizar o título */}
+        </header>
+
+        {/* ÁREA DE SCROLL DOS COMPONENTES */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-10 custom-scrollbar animate-in fade-in duration-500">
+          {abaAtiva === 'dashboard' && <AdminDashboard totalServicos={servicos.length} />}
+          {abaAtiva === 'agenda' && <AdminAgenda />}
+          {abaAtiva === 'servicos' && <AdminServicos servicos={servicos} aoMudar={aoMudar} />}
+          {abaAtiva === 'barbeiros' && <AdminBarbeiros />}
+          {abaAtiva === 'clientes' && <AdminClientes />}
+          {abaAtiva === 'planos' && <AdminPlanos />}
+          {abaAtiva === 'gerencia' && <AdminGerencia />}
+        </div>
       </main>
 
     </div>
