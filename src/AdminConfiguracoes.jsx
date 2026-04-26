@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, getDocs, doc, setDoc, getDoc } from 'firebase/firestore'
-import { Percent, Clock, Save, User, Calendar, AlertCircle, ChevronRight } from 'lucide-react'
+import { 
+  Percent, Clock, Save, User, Calendar, 
+  AlertCircle, Headphones, MessageSquare 
+} from 'lucide-react'
+import AdminSuporte from './AdminSuporte' // Vamos criar este arquivo abaixo
 
 const DIAS_NOME = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
 
@@ -10,7 +14,6 @@ export default function AdminConfiguracoes() {
   const [barbeiros, setBarbeiros] = useState([])
   const [comissoes, setComissoes] = useState({})
   
-  // Estado Unificado da Agenda (Horários, Intervalo e Feriados)
   const [configAgenda, setConfigAgenda] = useState({
     intervalo: '30',
     feriadosAtivos: true,
@@ -29,16 +32,13 @@ export default function AdminConfiguracoes() {
 
   useEffect(() => {
     const carregarDados = async () => {
-      // 1. Carregar Barbeiros
       const bSnap = await getDocs(collection(db, "barbeiros"))
       setBarbeiros(bSnap.docs.map(d => ({ id: d.id, ...d.data() })))
 
-      // 2. Carregar Comissões
       const comRef = doc(db, "configuracoes", "comissoes")
       const comSnap = await getDoc(comRef)
       if (comSnap.exists()) setComissoes(comSnap.data())
 
-      // 3. Carregar Configurações de Agenda (Intervalo, Feriados e Escala)
       const agendaRef = doc(db, "configuracoes", "agenda")
       const agendaSnap = await getDoc(agendaRef)
       if (agendaSnap.exists()) {
@@ -48,7 +48,6 @@ export default function AdminConfiguracoes() {
     carregarDados()
   }, [])
 
-  // Lógica para alterar horários da escala
   const handleDiaChange = (diaIdx, campo, valor) => {
     setConfigAgenda(prev => ({
       ...prev,
@@ -62,12 +61,8 @@ export default function AdminConfiguracoes() {
   const salvarConfiguracoes = async () => {
     setSalvando(true)
     try {
-      // Salva comissões no doc "comissoes"
       await setDoc(doc(db, "configuracoes", "comissoes"), comissoes)
-      
-      // Salva toda a estrutura da agenda no doc "agenda"
       await setDoc(doc(db, "configuracoes", "agenda"), configAgenda)
-      
       alert("Configurações atualizadas com sucesso!")
     } catch (e) {
       console.error(e)
@@ -89,16 +84,20 @@ export default function AdminConfiguracoes() {
             <Save size={12} className="text-red-600" /> Configurações globais da barbearia
           </p>
         </div>
-        <button 
-          onClick={salvando ? null : salvarConfiguracoes}
-          className="bg-red-600 hover:bg-red-700 text-white px-10 py-5 rounded-2xl font-black uppercase text-xs tracking-[0.2em] flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-600/20 active:scale-95 disabled:opacity-50"
-          disabled={salvando}
-        >
-          {salvando ? "Salvando..." : <><Save size={20} /> Salvar Tudo</>}
-        </button>
+        
+        {/* O botão de salvar só aparece se não estiver na aba de Suporte */}
+        {secao !== 'suporte' && (
+          <button 
+            onClick={salvando ? null : salvarConfiguracoes}
+            className="bg-red-600 hover:bg-red-700 text-white px-10 py-5 rounded-2xl font-black uppercase text-xs tracking-[0.2em] flex items-center justify-center gap-3 transition-all shadow-xl shadow-red-600/20 active:scale-95 disabled:opacity-50"
+            disabled={salvando}
+          >
+            {salvando ? "Salvando..." : <><Save size={20} /> Salvar Tudo</>}
+          </button>
+        )}
       </div>
 
-      {/* NAVEGAÇÃO POR ABAS */}
+      {/* NAVEGAÇÃO POR ABAS ATUALIZADA */}
       <div className="flex gap-4 mb-8 bg-[#0a0a0a] p-2 rounded-2xl border border-[#1f1f1f]">
         <button 
           onClick={() => setSecao('comissoes')}
@@ -111,6 +110,13 @@ export default function AdminConfiguracoes() {
           className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all ${secao === 'escala' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-gray-500 hover:text-gray-300'}`}
         >
           <Clock size={16} /> Escala & Horários
+        </button>
+        {/* NOVO BOTÃO DE SUPORTE */}
+        <button 
+          onClick={() => setSecao('suporte')}
+          className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all ${secao === 'suporte' ? 'bg-white text-black shadow-lg shadow-white/10' : 'text-gray-500 hover:text-gray-300'}`}
+        >
+          <Headphones size={16} /> Suporte
         </button>
       </div>
 
@@ -145,8 +151,6 @@ export default function AdminConfiguracoes() {
       {/* SEÇÃO: ESCALA & HORÁRIOS */}
       {secao === 'escala' && (
         <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-          
-          {/* CONFIGS GERAIS DE TEMPO */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-[#111] p-8 rounded-[2.5rem] border border-[#1f1f1f]">
               <label className="block text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-4">Intervalo entre Cortes</label>
@@ -173,7 +177,6 @@ export default function AdminConfiguracoes() {
             </div>
           </div>
 
-          {/* GRADE SEMANAL DETALHADA */}
           <div className="space-y-3">
             <h3 className="text-xs font-black uppercase text-gray-500 tracking-[0.3em] ml-4 mb-4 flex items-center gap-2">
               <Calendar size={14} /> Definição de Turnos Semanais
@@ -183,8 +186,6 @@ export default function AdminConfiguracoes() {
               const dia = configAgenda.horariosPorDia[diaIdx]
               return (
                 <div key={diaIdx} className={`p-6 rounded-[2rem] border transition-all flex flex-col lg:flex-row items-center gap-6 ${dia.ativo ? 'bg-[#111] border-[#1f1f1f]' : 'bg-[#0a0a0a] border-[#1a1a1a] opacity-50'}`}>
-                  
-                  {/* Status do Dia */}
                   <div className="w-full lg:w-48 flex-shrink-0">
                     <label className="flex items-center cursor-pointer gap-4 group">
                       <div className="relative">
@@ -232,6 +233,14 @@ export default function AdminConfiguracoes() {
           </div>
         </div>
       )}
+
+      {/* SEÇÃO: SUPORTE (NOVO) */}
+      {secao === 'suporte' && (
+        <div className="animate-in slide-in-from-bottom-4 duration-500">
+           <AdminSuporte />
+        </div>
+      )}
+
     </div>
   )
 }

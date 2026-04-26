@@ -7,6 +7,7 @@ import { collection, getDocs } from 'firebase/firestore'
 import Cliente from './Cliente'
 import Admin from './Admin'
 import PainelBarbeiro from './PainelBarbeiro' // <-- Adicionamos a importação do painel do barbeiro
+import SuperAdmin from './SuperAdmin'
 
 export default function App() {
   const [servicos, setServicos] = useState([])
@@ -38,6 +39,7 @@ export default function App() {
         
         {/* Nova rota adicionada: o portal de acesso dos profissionais */}
         <Route path="/barbeiro" element={<PainelBarbeiro />} />
+        <Route path="/superadmin" element={<SuperAdmin />} />
       </Routes>
     </BrowserRouter>
   )
