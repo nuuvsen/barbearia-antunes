@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore' // Removi o deleteDoc
+import { collection, getDocs, doc, updateDoc } from 'firebase/firestore' 
 
 const IconCheck = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
@@ -20,7 +20,6 @@ export default function AdminDashboard({ totalServicos }) {
     carregarAgendamentos()
   }
 
-  // MUDANÇA AQUI: Agora ele apenas muda o status para "Cancelado" em vez de deletar do banco
   const excluirAgendamento = async (id) => {
     if (window.confirm("Deseja remover este agendamento da lista?")) {
       await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" })
@@ -30,8 +29,16 @@ export default function AdminDashboard({ totalServicos }) {
 
   const formatarWhatsApp = (numero) => `https://wa.me/55${numero.replace(/\D/g, '')}`
 
-  // Filtramos os cancelados para que eles não apareçam na contagem nem na lista da tela
-  const agendamentosVisiveis = agendamentos.filter(ag => ag.status !== 'Cancelado')
+  // Filtramos os cancelados e ORDENAMOS por Data e depois por Hora
+  const agendamentosVisiveis = agendamentos
+    .filter(ag => ag.status !== 'Cancelado')
+    .sort((a, b) => {
+      const dataA = a.data || "";
+      const dataB = b.data || "";
+      const horaA = a.hora || "";
+      const horaB = b.hora || "";
+      return dataA.localeCompare(dataB) || horaA.localeCompare(horaB);
+    })
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -40,7 +47,6 @@ export default function AdminDashboard({ totalServicos }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
          <div className="bg-[#111111] border border-[#1f1f1f] p-6 rounded-2xl">
             <p className="text-xs text-gray-500 uppercase font-black mb-2">Total de Agendamentos</p>
-            {/* Atualizado para contar apenas os não-cancelados */}
             <p className="text-4xl font-black">{agendamentosVisiveis.length}</p>
          </div>
          <div className="bg-[#111111] border border-[#1f1f1f] p-6 rounded-2xl">
@@ -54,7 +60,6 @@ export default function AdminDashboard({ totalServicos }) {
       <div className="grid gap-4">
         {agendamentosVisiveis.length === 0 && <p className="text-gray-600 italic">Nenhum cliente agendado ainda...</p>}
         
-        {/* Atualizado para mapear apenas os visíveis */}
         {agendamentosVisiveis.map(ag => (
           <div key={ag.id} className={`p-6 rounded-2xl border transition-all flex flex-col md:flex-row justify-between items-center gap-4 ${ag.status === 'Concluído' ? 'bg-green-900/10 border-green-900/30 opacity-60' : 'bg-[#111111] border-[#1f1f1f] border-l-4 border-l-red-600'}`}>
             <div className="flex-1">
@@ -65,10 +70,18 @@ export default function AdminDashboard({ totalServicos }) {
               <p className="text-sm text-gray-400 mt-1">{ag.servico} com <span className="font-bold text-white">{ag.barbeiro}</span></p>
             </div>
             <div className="flex items-center gap-4">
+              
               <div className="text-center px-4">
+                {ag.data && (
+                  /* CORREÇÃO AQUI: Mudamos de text-red-600 para text-white para agendamentos ativos */
+                  <p className={`text-[11px] font-black uppercase tracking-widest mb-1 ${ag.status === 'Concluído' ? 'text-gray-600' : 'text-white'}`}>
+                    {ag.data}
+                  </p>
+                )}
                 <p className="text-[10px] text-gray-500 uppercase font-bold">Horário</p>
-                <p className={`text-2xl font-black ${ag.status === 'Concluído' ? 'text-gray-600' : 'text-red-500'}`}>{ag.hora}</p>
+                <p className={`text-2xl font-black ${ag.status === 'Concluído' ? 'text-gray-600' : 'text-white'}`}>{ag.hora}</p>
               </div>
+
               <div className="flex gap-2">
                 <a href={formatarWhatsApp(ag.clienteTelefone)} target="_blank" rel="noreferrer" className="bg-[#1c1c1c] border border-[#2a2a2a] p-3 rounded-xl hover:bg-green-600 transition-all"><IconWhatsApp /></a>
                 {ag.status !== 'Concluído' && <button onClick={() => concluirAgendamento(ag.id)} className="bg-green-600 text-white p-3 rounded-xl hover:bg-green-500 transition-all"><IconCheck /></button>}

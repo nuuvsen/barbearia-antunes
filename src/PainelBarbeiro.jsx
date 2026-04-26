@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-// CORREÇÃO AQUI: Mudamos de '../firebase' para './firebase'
 import { auth, db } from './firebase'; 
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -15,6 +14,7 @@ export default function PainelBarbeiro() {
   const [barbeiroLogado, setBarbeiroLogado] = useState(null);
   const [agendamentos, setAgendamentos] = useState([]);
   const [carregando, setCarregando] = useState(true);
+  const [erroAgenda, setErroAgenda] = useState('');
 
   // Verifica se alguém já está logado ao abrir a página
   useEffect(() => {
@@ -22,7 +22,7 @@ export default function PainelBarbeiro() {
       if (user) {
         setLogado(true);
         setBarbeiroLogado(user);
-        await buscarAgendaDoBarbeiro(user.uid);
+        await buscarAgenda(user.uid); 
       } else {
         setLogado(false);
       }
@@ -42,7 +42,6 @@ export default function PainelBarbeiro() {
     }
 
     try {
-      // Cria o e-mail fictício para o Firebase Auth (ex: solano@antunes.com)
       const emailFicticio = `${nome.toLowerCase().replace(/\s/g, '')}@antunes.com`;
       await signInWithEmailAndPassword(auth, emailFicticio, senha);
       setErro('');
@@ -51,21 +50,50 @@ export default function PainelBarbeiro() {
     }
   };
 
-  // Busca apenas os clientes DESTE barbeiro no banco de dados
-  const buscarAgendaDoBarbeiro = async (barbeiroId) => {
+  // --- NOVA BUSCA: Espelhada no AdminDashboard ---
+  const buscarAgenda = async (uidAuth) => {
     try {
-      const q = query(
-        collection(db, "agendamentos"), 
-        where("barbeiroId", "==", barbeiroId) 
+      setErroAgenda('');
+      
+      // 1. Descobrir o NOME real do barbeiro logado
+      const qPerfil = query(collection(db, "barbeiros"), where("uid", "==", uidAuth));
+      const snapPerfil = await getDocs(qPerfil);
+
+      if (snapPerfil.empty) {
+        setErroAgenda("Perfil não encontrado. Verifique com o administrador.");
+        return;
+      }
+
+      const nomeDoBarbeiro = snapPerfil.docs[0].data().nome;
+
+      // 2. Buscar TODOS os agendamentos (igual no Admin)
+      const snapAgendamentos = await getDocs(collection(db, "agendamentos"));
+      let todosAgendamentos = snapAgendamentos.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // 3. Filtrar apenas os agendamentos DESTE barbeiro e que estão ativos
+      let agendaDoBarbeiro = todosAgendamentos.filter(ag => 
+        ag.barbeiro === nomeDoBarbeiro && 
+        ag.status !== 'Cancelado' && 
+        ag.status !== 'Concluído'
       );
-      const querySnapshot = await getDocs(q);
-      const listaAgendamentos = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setAgendamentos(listaAgendamentos);
+
+      // 4. Ordenar por Data e Hora
+      agendaDoBarbeiro.sort((a, b) => {
+        const dataA = a.data || "";
+        const dataB = b.data || "";
+        const horaA = a.hora || "";
+        const horaB = b.hora || "";
+        return dataA.localeCompare(dataB) || horaA.localeCompare(horaB);
+      });
+
+      // 5. Pegar apenas os 5 primeiros
+      const proximos5 = agendaDoBarbeiro.slice(0, 5);
+
+      setAgendamentos(proximos5);
+
     } catch (error) {
       console.error("Erro ao buscar agenda:", error);
+      setErroAgenda("Erro ao carregar os clientes. Tente novamente.");
     }
   };
 
@@ -81,7 +109,7 @@ export default function PainelBarbeiro() {
     );
   }
 
-  // --- TELA 1: SE NÃO ESTIVER LOGADO (MOSTRA O LOGIN) ---
+  // --- TELA 1: LOGIN ---
   if (!logado) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
@@ -94,7 +122,7 @@ export default function PainelBarbeiro() {
             <label className="block mb-2 font-bold text-sm text-zinc-300">Seu Nome:</label>
             <input 
               type="text" 
-              className="w-full p-3 rounded bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-red-500 font-bold"
+              className="w-full p-3 rounded bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-red-500 font-bold uppercase"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               placeholder="Ex: Joao"
@@ -114,7 +142,7 @@ export default function PainelBarbeiro() {
             />
           </div>
 
-          {erro && <p className="text-red-500 mb-4 text-sm text-center font-bold">{erro}</p>}
+          {erro && <p className="text-red-500 mb-4 text-sm text-center font-bold uppercase tracking-widest">{erro}</p>}
 
           <button type="submit" className="w-full bg-red-600 hover:bg-red-700 p-3 rounded font-black transition text-white uppercase tracking-wider">
             Entrar
@@ -124,7 +152,7 @@ export default function PainelBarbeiro() {
     );
   }
 
-  // --- TELA 2: SE ESTIVER LOGADO (MOSTRA A AGENDA) ---
+  // --- TELA 2: AGENDA ---
   return (
     <div className="min-h-screen bg-zinc-100 p-4 md:p-6">
       <header className="flex justify-between items-center bg-white p-4 rounded-lg shadow mb-6 border-b-4 border-red-600">
@@ -133,35 +161,59 @@ export default function PainelBarbeiro() {
         </h1>
         <button 
           onClick={fazerLogout}
-          className="bg-black hover:bg-zinc-800 text-white font-bold py-2 px-6 rounded transition"
+          className="bg-black hover:bg-zinc-800 text-white font-bold py-2 px-6 rounded transition uppercase tracking-widest text-xs"
         >
           Sair
         </button>
       </header>
 
       <main className="bg-white p-4 md:p-6 rounded-lg shadow max-w-4xl mx-auto">
-        <h2 className="text-xl font-bold mb-4 border-b pb-2 text-zinc-800">Próximos Clientes</h2>
+        <div className="flex justify-between items-end mb-4 border-b pb-2">
+          <h2 className="text-xl font-bold text-zinc-800 uppercase tracking-tighter">Próximos Clientes</h2>
+          <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Top 5</span>
+        </div>
         
+        {erroAgenda && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 font-bold text-sm">
+            {erroAgenda}
+          </div>
+        )}
+
         {agendamentos.length > 0 ? (
-          <ul className="divide-y divide-gray-200">
-            {agendamentos.map((agendamento) => (
-              <li key={agendamento.id} className="py-4 flex justify-between items-center hover:bg-zinc-50 px-2 rounded transition">
+          <ul className="space-y-3">
+            {agendamentos.map((agendamento, index) => (
+              <li 
+                key={agendamento.id} 
+                // AQUI FOI ALTERADO: Aplicado o estilo escuro idêntico ao AdminDashboard
+                className={`py-4 px-4 flex justify-between items-center rounded-lg transition-all bg-[#111111] border border-[#1f1f1f] border-l-4 border-l-red-600 ${
+                  index === 0 ? 'shadow-md' : ''
+                }`}
+              >
                 <div>
-                  <p className="font-bold text-lg text-black">{agendamento.nomeCliente}</p>
-                  <p className="text-sm text-zinc-600 font-semibold">{agendamento.servico}</p>
+                  {index === 0 && (
+                    <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded font-black uppercase tracking-widest mb-1 inline-block">
+                      Próximo da Fila
+                    </span>
+                  )}
+                  {/* Atualizado para usar clienteNome e ajustado a cor para branco e cinza claro */}
+                  <p className="font-black text-lg text-white uppercase tracking-tighter">{agendamento.clienteNome}</p>
+                  <p className="text-sm text-gray-400 font-bold uppercase">{agendamento.servico}</p>
                 </div>
                 <div className="text-right">
-                  <p className="font-black text-red-600 text-lg">{agendamento.horario}</p>
-                  <p className="font-bold text-zinc-500 text-sm">{agendamento.data}</p>
+                  {/* Atualizado para usar hora e ajustado a cor para branco e cinza claro */}
+                  <p className="font-black text-white text-xl tracking-tighter">{agendamento.hora}</p>
+                  <p className="font-bold text-gray-400 text-xs uppercase tracking-widest">{agendamento.data}</p>
                 </div>
               </li>
             ))}
           </ul>
         ) : (
-          <div className="text-center py-12">
-            <p className="text-zinc-500 font-bold text-lg">Nenhum agendamento para hoje.</p>
-            <p className="text-zinc-400">Aproveite para tomar um café!</p>
-          </div>
+          !erroAgenda && (
+            <div className="text-center py-12 bg-zinc-50 rounded-lg border border-dashed border-zinc-200">
+              <p className="text-zinc-500 font-black text-lg uppercase tracking-tighter">Nenhum agendamento na fila.</p>
+              <p className="text-zinc-400 font-bold text-sm">Aproveite para tomar um café!</p>
+            </div>
+          )
         )}
       </main>
     </div>
