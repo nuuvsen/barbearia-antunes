@@ -29,7 +29,7 @@ export default function Cliente({ servicos }) {
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
   
-  // ESTADOS MEUS AGENDAMENTOS (NOVO)
+  // ESTADOS MEUS AGENDAMENTOS
   const [telefoneHistorico, setTelefoneHistorico] = useState('')
   const [meusAgendamentos, setMeusAgendamentos] = useState([])
   const [carregandoHistorico, setCarregandoHistorico] = useState(false)
@@ -77,29 +77,24 @@ export default function Cliente({ servicos }) {
     carregarTudo()
   }, [])
 
+  // BUSCA AUTOMÁTICA DE NOME (ASSINANTE OU HISTÓRICO)
   useEffect(() => {
     const buscarNomeCliente = async () => {
       const tel = contato.telefone.trim()
-      // Funciona no agendamento normal
       if (tel.length >= 10 && modo === 'agendamento') {
         try {
-          // TENTATIVA 1: Procura na lista de Assinantes (coleção "clientes")
           const docSnap = await getDoc(doc(db, "clientes", tel))
           if (docSnap.exists() && docSnap.data().nome) {
             setContato(prev => ({ ...prev, nome: docSnap.data().nome }))
-            return; // Se achou, para por aqui
+            return;
           }
-
-          // TENTATIVA 2: Procura no histórico de cortes antigos (coleção "agendamentos")
           const q = query(
             collection(db, "agendamentos"), 
             where("clienteTelefone", "==", tel), 
-            limit(1) // Pega só o mais recente para ser bem rápido
+            limit(1)
           )
           const snap = await getDocs(q)
-          
           if (!snap.empty) {
-            // Atenção: no agendamento salvamos como 'clienteNome'
             const nomeAntigo = snap.docs[0].data().clienteNome;
             if (nomeAntigo) {
               setContato(prev => ({ ...prev, nome: nomeAntigo }))
@@ -110,37 +105,27 @@ export default function Cliente({ servicos }) {
         }
       }
     }
-    
-    // Espera o cliente parar de digitar por 600ms para fazer a busca
     const delayId = setTimeout(buscarNomeCliente, 600)
     return () => clearTimeout(delayId)
   }, [contato.telefone, modo])
 
   const checarDisponibilidade = (dataObj) => {
     if (!configAgenda || !escolha.barbeiro) return false;
-
     const hoje = new Date();
     hoje.setHours(0,0,0,0);
-    
     if (dataObj < hoje) return false;
-
     let limiteFuturo = new Date();
     limiteFuturo.setMonth(limiteFuturo.getMonth() + 13);
     if (dataObj > limiteFuturo) return false;
-
     const ano = dataObj.getFullYear();
     const mes = String(dataObj.getMonth() + 1).padStart(2, '0');
     const dia = String(dataObj.getDate()).padStart(2, '0');
     const formatoAPI = `${ano}-${mes}-${dia}`;
-    
     const diaNum = dataObj.getDay();
     const diaSigla = MAPA_DIAS[diaNum];
-
     const barbeariaAberta = configAgenda.horariosPorDia[diaNum]?.ativo;
     const eFeriado = configAgenda.feriadosAtivos && feriados.some(f => f.date === formatoAPI);
-
     if (!barbeariaAberta || eFeriado) return false;
-
     if (escolha.barbeiro.id === 'qualquer') {
       return barbeiros.some(b => b.diasTrabalho?.[diaSigla] !== false);
     } else {
@@ -151,23 +136,20 @@ export default function Cliente({ servicos }) {
   const selecionarData = async (dia) => {
     setEscolha({...escolha, data: dia.formatoAPI})
     setEtapa(4)
-
     const diaSemana = dia.dataReal.getDay()
     const diaSigla = MAPA_DIAS[diaSemana] 
     const regraDoDia = configAgenda.horariosPorDia[diaSemana]
-
     let ocupados = []
 
     if (escolha.barbeiro.id === 'qualquer') {
       const q = query(collection(db, "agendamentos"), where("data", "==", dia.formatoAPI))
       const snap = await getDocs(q)
-      
       const contagemHoras = {}
-      snap.docs.forEach(d => {
+      // FILTRO: Só conta como ocupado se não estiver cancelado
+      snap.docs.filter(d => d.data().status !== 'Cancelado').forEach(d => {
         const h = d.data().hora
         contagemHoras[h] = (contagemHoras[h] || 0) + 1
       })
-
       const barbeirosAtivosHoje = barbeiros.filter(b => b.diasTrabalho?.[diaSigla] !== false).length || 1
       for (const [hora, qtd] of Object.entries(contagemHoras)) {
         if (qtd >= barbeirosAtivosHoje) ocupados.push(hora)
@@ -179,7 +161,10 @@ export default function Cliente({ servicos }) {
         where("data", "==", dia.formatoAPI)
       )
       const snap = await getDocs(q)
-      ocupados = snap.docs.map(d => d.data().hora)
+      // FILTRO: Horário só está ocupado se o status não for cancelado
+      ocupados = snap.docs
+        .filter(d => d.data().status !== 'Cancelado')
+        .map(d => d.data().hora)
     }
 
     setHorariosOcupados(ocupados)
@@ -190,12 +175,10 @@ export default function Cliente({ servicos }) {
       let fimMin = fim.split(':').map(Number)
       let totalFim = fimMin[0] * 60 + fimMin[1]
       let atual = h * 60 + m
-
       const agora = new Date()
       const eHoje = dia.dataReal.getDate() === agora.getDate() && 
                     dia.dataReal.getMonth() === agora.getMonth() && 
                     dia.dataReal.getFullYear() === agora.getFullYear()
-      
       const minutosAtuais = agora.getHours() * 60 + agora.getMinutes()
 
       while(atual + parseInt(intervalo) <= totalFim) {
@@ -218,19 +201,14 @@ export default function Cliente({ servicos }) {
     }
   }
 
-  // ==========================================
-  // FUNÇÕES DE LOGIN (ASSINATURA E HISTÓRICO)
-  // ==========================================
   const fazerLogin = async (e) => {
     e.preventDefault()
     setErroLogin('')
     const docSnap = await getDoc(doc(db, "clientes", telefoneLogin))
-
     if (docSnap.exists() && docSnap.data().planoId) {
       const dados = docSnap.data()
       const planoSnap = await getDoc(doc(db, "planos", dados.planoId))
       const dadosPlano = planoSnap.exists() ? planoSnap.data() : { servicosInclusos: [], combos: [] }
-
       setPerfil({ ...dados, servicosInclusos: dadosPlano.servicosInclusos || [], combosExclusivos: dadosPlano.combos || [] })
       setContato({ nome: dados.nome, telefone: dados.telefone })
       setModo('assinante_logado')
@@ -247,10 +225,7 @@ export default function Cliente({ servicos }) {
       const q = query(collection(db, "agendamentos"), where("clienteTelefone", "==", telefoneHistorico))
       const snap = await getDocs(q)
       const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      
-      // Ordena do mais recente para o mais antigo
       lista.sort((a, b) => new Date(b.data) - new Date(a.data) || b.hora.localeCompare(a.hora))
-      
       setMeusAgendamentos(lista)
       setModo('historico')
     } catch(error) {
@@ -259,12 +234,13 @@ export default function Cliente({ servicos }) {
     setCarregandoHistorico(false)
   }
 
+  // MUDANÇA SOLICITADA: Agora altera status em vez de deletar
   const cancelarMeuAgendamento = async (agendamento) => {
     if(window.confirm(`Deseja cancelar o agendamento de ${agendamento.servico} do dia ${formatarDataAmigavel(agendamento.data)} às ${agendamento.hora}?`)) {
       try {
-        await deleteDoc(doc(db, "agendamentos", agendamento.id))
+        // Atualiza no banco para Cancelado
+        await updateDoc(doc(db, "agendamentos", agendamento.id), { status: 'Cancelado' })
         
-        // UX Mágica: Se o cliente pagou usando crédito do plano, nós devolvemos o crédito!
         if (agendamento.preco === 'PLANO' || agendamento.preco === 'PLANO ATIVO') {
           const clienteRef = doc(db, "clientes", agendamento.clienteTelefone)
           const clienteSnap = await getDoc(clienteRef)
@@ -274,8 +250,11 @@ export default function Cliente({ servicos }) {
           }
         }
 
-        // Remove da lista na tela instantaneamente
-        setMeusAgendamentos(prev => prev.filter(a => a.id !== agendamento.id))
+        // Atualiza a lista localmente para refletir o status sem sumir
+        setMeusAgendamentos(prev => prev.map(a => 
+          a.id === agendamento.id ? { ...a, status: 'Cancelado' } : a
+        ))
+        
         alert("Agendamento cancelado com sucesso!")
       } catch (error) {
         alert("Erro ao cancelar o agendamento.")
@@ -296,14 +275,15 @@ export default function Cliente({ servicos }) {
   const finalizarAgendamento = async (e) => {
     e.preventDefault()
     setSalvando(true)
-
     const estaInclusoNoPlano = modo === 'assinante_logado' && (perfil.servicosInclusos.includes(escolha.servico.nome) || escolha.servico.isCombo)
     let barbeiroFinalNome = escolha.barbeiro.nome
 
     if (escolha.barbeiro.id === 'qualquer') {
       const q = query(collection(db, "agendamentos"), where("data", "==", escolha.data), where("hora", "==", escolha.hora))
       const snap = await getDocs(q)
-      const barbeirosOcupadosNesteHorario = snap.docs.map(d => d.data().barbeiro)
+      const barbeirosOcupadosNesteHorario = snap.docs
+        .filter(d => d.data().status !== 'Cancelado')
+        .map(d => d.data().barbeiro)
       
       const diaObj = new Date(escolha.data + 'T00:00:00')
       const diaSigla = MAPA_DIAS[diaObj.getDay()]
@@ -366,7 +346,6 @@ export default function Cliente({ servicos }) {
 
   const hoje = new Date();
   const isMesAtual = mesVisivel.getFullYear() === hoje.getFullYear() && mesVisivel.getMonth() === hoje.getMonth();
-  
   const dataLimite = new Date();
   dataLimite.setMonth(hoje.getMonth() + 13);
   const isMesLimite = mesVisivel.getFullYear() === dataLimite.getFullYear() && mesVisivel.getMonth() === dataLimite.getMonth();
@@ -375,7 +354,6 @@ export default function Cliente({ servicos }) {
     <div className="min-h-screen w-full bg-[#1a1a1a] text-white font-sans selection:bg-red-600">
       <div className="max-w-md mx-auto p-6 min-h-screen pb-24">
         
-        {/* CABEÇALHO ATUALIZADO COM OS DOIS BOTÕES */}
         <header className="flex justify-between items-center mb-6 pt-4">
           <div onClick={() => window.location.reload()} className="cursor-pointer">
             <h1 className="text-2xl font-black italic text-red-600 tracking-tighter uppercase">Antunes</h1>
@@ -418,7 +396,6 @@ export default function Cliente({ servicos }) {
           </div>
         )}
 
-        {/* TELA: LOGIN DA ASSINATURA */}
         {modo === 'login_assinante' && (
           <div className="animate-in fade-in duration-500 space-y-6">
             <div className="text-center mt-8">
@@ -432,7 +409,6 @@ export default function Cliente({ servicos }) {
           </div>
         )}
 
-        {/* TELA: LOGIN DOS MEUS AGENDAMENTOS */}
         {modo === 'login_historico' && (
           <div className="animate-in fade-in duration-500 space-y-6">
             <div className="text-center mt-8">
@@ -448,7 +424,6 @@ export default function Cliente({ servicos }) {
           </div>
         )}
 
-        {/* TELA: LISTA DE AGENDAMENTOS DO CLIENTE */}
         {modo === 'historico' && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right">
             <h2 className="text-lg font-black italic uppercase tracking-tighter text-white mb-6">Seu <span className="text-red-600">Histórico</span></h2>
@@ -456,7 +431,6 @@ export default function Cliente({ servicos }) {
             {meusAgendamentos.length === 0 ? (
                <div className="text-center p-10 bg-[#242424] rounded-3xl border border-[#333]">
                  <p className="text-gray-400 font-bold text-sm">Nenhum agendamento encontrado.</p>
-                 <p className="text-gray-600 text-xs mt-2">Os cortes que você marcar aparecerão aqui.</p>
                </div>
             ) : (
                meusAgendamentos.map(ag => {
@@ -472,7 +446,7 @@ export default function Cliente({ servicos }) {
                            </p>
                          </div>
                          <div className="text-right">
-                           <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg ${isPendente ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-gray-800 text-gray-500'}`}>
+                           <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg ${isPendente ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : ag.status === 'Cancelado' ? 'bg-red-500/20 text-red-500' : 'bg-gray-800 text-gray-500'}`}>
                              {ag.status || 'Pendente'}
                            </span>
                          </div>
@@ -493,7 +467,6 @@ export default function Cliente({ servicos }) {
           </div>
         )}
 
-        {/* TELA: FLUXO DE AGENDAMENTO */}
         {(modo === 'agendamento' || modo === 'assinante_logado') && (
           <div className="space-y-6">
             
@@ -577,15 +550,12 @@ export default function Cliente({ servicos }) {
                   <div className="grid grid-cols-7 gap-2">
                     {gridDias.map((dia, idx) => {
                       if (!dia) return <div key={`empty-${idx}`} />; 
-                      
                       const anoStr = dia.getFullYear();
                       const mesStr = String(dia.getMonth() + 1).padStart(2, '0');
                       const diaStr = String(dia.getDate()).padStart(2, '0');
                       const formatoAPI = `${anoStr}-${mesStr}-${diaStr}`;
-                      
                       const feriadoInfo = feriados.find(f => f.date === formatoAPI);
                       const eFeriado = configAgenda?.feriadosAtivos && !!feriadoInfo;
-                      
                       const disponivel = checarDisponibilidade(dia);
                       
                       return (
