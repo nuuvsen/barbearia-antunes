@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth"; // <-- 1. Importamos a ferramenta de Auth
 
 const firebaseConfig = {
   apiKey: "AIzaSyDvHAf6GShqzUFTbopXXlN39uMzL0leLIY",
@@ -14,5 +15,8 @@ const firebaseConfig = {
 // Inicializa a conexão com o Google
 const app = initializeApp(firebaseConfig);
 
-// Inicializa o Banco de Dados e "exporta" ele para podermos usar no App.jsx
+// Inicializa o Banco de Dados e "exporta" ele
 export const db = getFirestore(app);
+
+// Inicializa a Autenticação e "exporta" ela (ISSO RESOLVE A TELA BRANCA)
+export const auth = getAuth(app);

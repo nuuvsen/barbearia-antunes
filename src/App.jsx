@@ -6,6 +6,7 @@ import { collection, getDocs } from 'firebase/firestore'
 // Aqui nós "puxamos" os arquivos que você acabou de criar!
 import Cliente from './Cliente'
 import Admin from './Admin'
+import PainelBarbeiro from './PainelBarbeiro' // <-- Adicionamos a importação do painel do barbeiro
 
 export default function App() {
   const [servicos, setServicos] = useState([])
@@ -34,6 +35,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Cliente servicos={servicos} />} />
         <Route path="/admin" element={<Admin servicos={servicos} aoMudar={carregarDados} />} />
+        
+        {/* Nova rota adicionada: o portal de acesso dos profissionais */}
+        <Route path="/barbeiro" element={<PainelBarbeiro />} />
       </Routes>
     </BrowserRouter>
   )

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
-import { db } from './firebase'
+import { auth, db } from './firebase' 
+// Importamos novas ferramentas do Firebase Auth para o "truque" da senha
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updatePassword, signOut } from 'firebase/auth' 
 import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
 import { Check, X, Calendar } from 'lucide-react'
 
@@ -25,14 +27,15 @@ const FotoPadrao = () => (
 
 export default function AdminBarbeiros() {
   const [barbeiros, setBarbeiros] = useState([])
+  const [erro, setErro] = useState('') 
+  const [carregando, setCarregando] = useState(false) 
   
-  // Agenda padrão inicial: todos os dias começam como 'true' (trabalha)
   const agendaInicial = {
     seg: true, ter: true, qua: true, qui: true, sex: true, sab: true, dom: false
   }
 
   const [form, setForm] = useState({ 
-    id: null, nome: '', idade: '', dataInicio: '', instagram: '', foto: '',
+    id: null, nome: '', idade: '', dataInicio: '', instagram: '', foto: '', senha: '',
     diasTrabalho: agendaInicial 
   })
 
@@ -55,25 +58,91 @@ export default function AdminBarbeiros() {
 
   const salvar = async (e) => {
     e.preventDefault()
-    if (!form.nome) return
-
-    const dadosBarbeiro = {
-      nome: form.nome,
-      idade: form.idade,
-      dataInicio: form.dataInicio,
-      instagram: form.instagram,
-      foto: form.foto || '',
-      diasTrabalho: form.diasTrabalho // Salva apenas quais dias ele está ativo
+    if (!form.nome || form.senha.length < 6) {
+      setErro("Preencha o nome e uma senha de no mínimo 6 dígitos.")
+      return
     }
+    
+    setErro('')
+    setCarregando(true)
 
-    if (form.id) {
-      await updateDoc(doc(db, "barbeiros", form.id), dadosBarbeiro)
-    } else {
-      await addDoc(collection(db, "barbeiros"), dadosBarbeiro)
+    try {
+      const dadosBarbeiro = {
+        nome: form.nome,
+        idade: form.idade,
+        dataInicio: form.dataInicio,
+        instagram: form.instagram,
+        foto: form.foto || '',
+        diasTrabalho: form.diasTrabalho 
+      }
+
+      if (form.id) {
+        // --- MODO EDIÇÃO ---
+        const barbeiroAtual = barbeiros.find(b => b.id === form.id)
+
+        // Se o admin digitou uma senha diferente da que estava salva
+        if (form.senha !== barbeiroAtual.senhaAcesso) {
+          if (!barbeiroAtual.senhaAcesso) {
+            setErro("Este barbeiro é antigo e não tem senha salva. Exclua e crie novamente.")
+            setCarregando(false)
+            return
+          }
+
+          try {
+            // 1. Loga rapidamente como o barbeiro usando a senha antiga
+            const userCred = await signInWithEmailAndPassword(auth, barbeiroAtual.emailAcesso, barbeiroAtual.senhaAcesso)
+            
+            // 2. Altera a senha no Firebase Auth
+            await updatePassword(userCred.user, form.senha)
+            
+            // 3. Desloga imediatamente
+            await signOut(auth)
+
+            // 4. Salva a nova senha no banco de dados para consultas futuras
+            dadosBarbeiro.senhaAcesso = form.senha
+          } catch (err) {
+            console.error(err)
+            setErro("Erro interno ao alterar a senha de segurança.")
+            setCarregando(false)
+            return
+          }
+        } else {
+          // Se não mudou a senha, mantém a mesma no banco
+          dadosBarbeiro.senhaAcesso = barbeiroAtual.senhaAcesso
+        }
+
+        await updateDoc(doc(db, "barbeiros", form.id), dadosBarbeiro)
+
+      } else {
+        // --- MODO CRIAÇÃO ---
+        const emailFicticio = `${form.nome.toLowerCase().replace(/\s/g, '')}@antunes.com`
+        const credencial = await createUserWithEmailAndPassword(auth, emailFicticio, form.senha)
+        
+        dadosBarbeiro.uid = credencial.user.uid
+        dadosBarbeiro.emailAcesso = emailFicticio
+        dadosBarbeiro.senhaAcesso = form.senha // Salva a senha no banco de dados
+
+        await addDoc(collection(db, "barbeiros"), dadosBarbeiro)
+      }
+
+      setForm({ id: null, nome: '', idade: '', dataInicio: '', instagram: '', foto: '', senha: '', diasTrabalho: agendaInicial })
+      carregar()
+    } catch (error) {
+      console.error("Erro ao salvar:", error)
+      if (error.code === 'auth/email-already-in-use') {
+        setErro("Já existe um barbeiro com este nome.")
+      } else {
+        // Mudamos esta linha abaixo para mostrar a mensagem real do erro!
+        setErro(`Erro do Firebase: ${error.code}`) 
+      }
+    } finally {
+      setCarregando(false)
     }
+  }
 
-    setForm({ id: null, nome: '', idade: '', dataInicio: '', instagram: '', foto: '', diasTrabalho: agendaInicial })
-    carregar()
+  const cancelarEdicao = () => {
+    setErro('')
+    setForm({ id: null, nome: '', idade: '', dataInicio: '', instagram: '', foto: '', senha: '', diasTrabalho: agendaInicial })
   }
 
   return (
@@ -96,7 +165,12 @@ export default function AdminBarbeiros() {
                 </div>
                 <div>
                   <p className="font-black text-2xl uppercase tracking-tighter text-white">{b.nome}</p>
-                  <p className="text-xs text-gray-500 uppercase font-bold tracking-widest">{b.idade} Anos • Desde {b.dataInicio}</p>
+                  <p className="text-xs text-gray-500 uppercase font-bold tracking-widest mb-1">{b.idade} Anos • Desde {b.dataInicio}</p>
+                  
+                  {/* Exibe a senha salva para o Admin ver facilmente */}
+                  {b.senhaAcesso && (
+                    <p className="text-[10px] text-red-500 font-black uppercase tracking-widest">PIN de Acesso: {b.senhaAcesso}</p>
+                  )}
                   
                   {/* Resumo visual dos dias que trabalha */}
                   <div className="flex gap-1 mt-3">
@@ -110,7 +184,8 @@ export default function AdminBarbeiros() {
               </div>
               
               <div className="flex gap-2">
-                <button onClick={() => setForm({ ...b, diasTrabalho: b.diasTrabalho || agendaInicial })} className="bg-[#1c1c1c] p-3 rounded-xl hover:bg-white hover:text-black transition-all">✏️</button>
+                {/* Ao clicar em editar, já preenche a senha atual no formulário */}
+                <button onClick={() => { setErro(''); setForm({ ...b, senha: b.senhaAcesso || '', diasTrabalho: b.diasTrabalho || agendaInicial }) }} className="bg-[#1c1c1c] p-3 rounded-xl hover:bg-white hover:text-black transition-all">✏️</button>
                 <button onClick={async () => { if(confirm("Remover da equipe?")) { await deleteDoc(doc(db, "barbeiros", b.id)); carregar(); } }} className="bg-[#1c1c1c] p-3 rounded-xl hover:bg-red-600 transition-all text-white">🗑️</button>
               </div>
             </div>
@@ -123,14 +198,26 @@ export default function AdminBarbeiros() {
           <form onSubmit={salvar} className="space-y-6">
             
             <div className="space-y-3">
-              <input value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} placeholder="Nome do Barbeiro" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" />
+              <input value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} placeholder="Nome do Barbeiro" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" required />
+              
+              {/* O campo de senha agora aparece na Criação e na Edição */}
+              <div>
+                <input value={form.senha} onChange={e => setForm({...form, senha: e.target.value})} placeholder="Senha de Acesso" type="text" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" required />
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2 ml-2">
+                  {form.id ? "Altere os números acima para redefinir a senha" : "Mín. 6 dígitos. O barbeiro usará para login."}
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <input value={form.idade} onChange={e => setForm({...form, idade: e.target.value})} placeholder="Idade" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" />
                 <input value={form.dataInicio} onChange={e => setForm({...form, dataInicio: e.target.value})} placeholder="Início (Ano)" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" />
               </div>
             </div>
 
-            {/* SELEÇÃO DE DIAS (AGENDA PADRÃO) */}
+            {/* AVISO DE ERRO */}
+            {erro && <p className="text-red-500 text-xs font-black uppercase tracking-widest text-center">{erro}</p>}
+
+            {/* SELEÇÃO DE DIAS */}
             <div className="pt-4 border-t border-white/5">
               <h3 className="text-[10px] font-black uppercase text-gray-500 mb-4 flex items-center gap-2 tracking-widest">
                 <Calendar size={12} className="text-red-600" /> Dias de Atendimento
@@ -155,12 +242,12 @@ export default function AdminBarbeiros() {
               </div>
             </div>
 
-            <button type="submit" className="w-full bg-red-600 text-white font-black py-4 rounded-2xl hover:bg-red-700 uppercase tracking-widest transition-all shadow-lg shadow-red-600/20">
-              {form.id ? 'Atualizar Perfil' : 'Salvar Barbeiro'}
+            <button type="submit" disabled={carregando} className={`w-full text-white font-black py-4 rounded-2xl uppercase tracking-widest transition-all shadow-lg shadow-red-600/20 ${carregando ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}>
+              {carregando ? 'Salvando...' : (form.id ? 'Atualizar Perfil' : 'Salvar Barbeiro')}
             </button>
             
             {form.id && (
-              <button type="button" onClick={() => setForm({id:null, nome:'', idade:'', dataInicio:'', instagram:'', foto:'', diasTrabalho: agendaInicial})} className="w-full text-gray-600 text-[10px] font-black uppercase tracking-widest mt-2 hover:text-white transition-colors">
+              <button type="button" onClick={cancelarEdicao} className="w-full text-gray-600 text-[10px] font-black uppercase tracking-widest mt-2 hover:text-white transition-colors">
                 Cancelar Edição
               </button>
             )}
