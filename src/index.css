@@ -1,1 +1,36 @@
 @import "tailwindcss";
+
+:root {
+  /* TEMA ESCURO (Padrão) */
+  --cor-primaria: #dc2626;
+  --cor-primaria-rgb: 220, 38, 38; /* Necessário para transparências dinâmicas */
+  
+  --cor-fundo: #0a0a0a;
+  --cor-card: #111111;
+  --cor-borda: #1f1f1f;
+  
+  --cor-texto-principal: #ffffff; /* Texto branco no fundo escuro */
+  --cor-texto-secundario: #adadad;
+
+  --cor-input-bg: #050505;
+  --cor-bg-botao: #1a1a1a;
+}
+
+/* TEMA CLARO (Ativado via JS ou classe no body) */
+[data-theme="light"] {
+  --cor-fundo: #f8f9fa;
+  --cor-card: #ffffff;
+  --cor-borda: #e9ecef;
+  
+  --cor-texto-principal: #1a1a1a; /* Texto escuro no fundo branco */
+  --cor-texto-secundario: #6c757d;
+
+  --cor-input-bg: #f1f3f5;
+  --cor-bg-botao: #e9ecef;
+}
+
+body {
+  background-color: var(--cor-fundo);
+  color: var(--cor-texto-principal);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}

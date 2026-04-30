@@ -1,26 +1,64 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore'
+import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore'
 
 export default function AdminPlanos() {
   const [planos, setPlanos] = useState([])
   const [servicosDisponiveis, setServicosDisponiveis] = useState([])
+  const [carregando, setCarregando] = useState(true) // Estado para evitar o flash
   
-  // Adicionado o array de "combos" no estado do formulário
-  const [form, setForm] = useState({ id: null, nome: '', valor: '', cortes: '', status: 'Ativo', servicosInclusos: [], combos: [] })
+  // Inicializa tentando pegar do localStorage (Síncrono - resolve o flash)
+  const [cores, setCores] = useState(() => {
+    const salvo = localStorage.getItem('tema_customizado')
+    return salvo ? JSON.parse(salvo) : {
+      primaria: '#922020',
+      fundo: '#bababa',
+      card: '#ffffff',
+      texto: '#171717',
+      textoSecundario: '#2e2e2e',
+      borda: '#000000'
+    }
+  })
+
+  const [form, setForm] = useState({ 
+    id: null, 
+    nome: '', 
+    valor: '', 
+    cortes: '', 
+    status: 'Ativo', 
+    servicosInclusos: [], 
+    combos: [] 
+  })
   
-  // Estado temporário para digitar o combo na hora
   const [novoCombo, setNovoCombo] = useState({ nome: '', tempo: '' })
 
-  const carregar = async () => {
-    const snapPlanos = await getDocs(collection(db, "planos"))
-    setPlanos(snapPlanos.docs.map(d => ({ id: d.id, ...d.data() })))
+  const carregarDados = async () => {
+    try {
+      // 1. Busca a personalização primeiro para garantir as cores
+      const docConfig = await getDoc(doc(db, "configuracoes", "personalizacao"))
+      if (docConfig.exists() && docConfig.data().cores) {
+        const novasCores = docConfig.data().cores;
+        setCores(novasCores);
+        // Atualiza o cache local para a próxima visita ser instantânea
+        localStorage.setItem('tema_customizado', JSON.stringify(novasCores));
+      }
 
-    const snapServicos = await getDocs(collection(db, "servicos"))
-    setServicosDisponiveis(snapServicos.docs.map(d => d.data().nome))
+      // 2. Busca o restante dos dados
+      const [snapPlanos, snapServicos] = await Promise.all([
+        getDocs(collection(db, "planos")),
+        getDocs(collection(db, "servicos"))
+      ]);
+
+      setPlanos(snapPlanos.docs.map(d => ({ id: d.id, ...d.data() })))
+      setServicosDisponiveis(snapServicos.docs.map(d => d.data().nome))
+    } catch (error) {
+      console.error("Erro ao carregar dados:", error);
+    } finally {
+      setCarregando(false); // Libera a tela após carregar tudo
+    }
   }
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { carregarDados() }, [])
 
   const salvar = async (e) => {
     e.preventDefault()
@@ -32,7 +70,7 @@ export default function AdminPlanos() {
       cortes: form.cortes,
       status: form.status,
       servicosInclusos: form.servicosInclusos,
-      combos: form.combos // Salva os combos exclusivos criados
+      combos: form.combos 
     }
 
     if (form.id) {
@@ -42,13 +80,13 @@ export default function AdminPlanos() {
     }
 
     setForm({ id: null, nome: '', valor: '', cortes: '', status: 'Ativo', servicosInclusos: [], combos: [] })
-    carregar()
+    carregarDados()
   }
 
   const alternarStatus = async (plano) => {
     const novoStatus = plano.status === 'Ativo' ? 'Inativo' : 'Ativo'
     await updateDoc(doc(db, "planos", plano.id), { status: novoStatus })
-    carregar()
+    carregarDados()
   }
 
   const toggleServico = (nome) => {
@@ -59,11 +97,10 @@ export default function AdminPlanos() {
     }
   }
 
-  // Função para adicionar o combo na lista do plano
   const adicionarCombo = () => {
     if (novoCombo.nome && novoCombo.tempo) {
       setForm({ ...form, combos: [...form.combos, novoCombo] })
-      setNovoCombo({ nome: '', tempo: '' }) // Limpa os campos após adicionar
+      setNovoCombo({ nome: '', tempo: '' })
     }
   }
 
@@ -72,10 +109,27 @@ export default function AdminPlanos() {
     setForm({ ...form, combos: novaLista })
   }
 
+  const hexToRgba = (hex, alpha) => {
+    if (!hex) return `rgba(0,0,0,${alpha})`;
+    const r = parseInt(hex.slice(1, 3), 16)
+    const g = parseInt(hex.slice(3, 5), 16)
+    const b = parseInt(hex.slice(5, 7), 16)
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  }
+
+  // Enquanto estiver carregando os dados do Firebase pela primeira vez, 
+  // mostramos uma tela vazia ou um loader com a cor de fundo já aplicada
+  if (carregando) {
+    return <div className="min-h-screen w-full" style={{ backgroundColor: cores.fundo }} />;
+  }
+
   return (
-    <div className="animate-in fade-in duration-500">
-      <h1 className="text-4xl font-black uppercase italic tracking-tighter mb-10 text-white">
-        Gestão de <span className="text-red-600">Planos</span>
+    <div className="animate-in fade-in duration-500 min-h-screen p-4 md:p-10" style={{ backgroundColor: cores.fundo }}>
+      <h1 
+        className="text-4xl font-black uppercase italic tracking-tighter mb-10"
+        style={{ color: cores.texto }}
+      >
+        Gestão de <span style={{ color: cores.primaria }}>Planos</span>
       </h1>
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
@@ -83,86 +137,192 @@ export default function AdminPlanos() {
         {/* LISTA DE PLANOS */}
         <div className="lg:col-span-2 space-y-4">
           {planos.map(p => (
-            <div key={p.id} className={`bg-[#111111] p-6 rounded-3xl border ${p.status === 'Ativo' ? 'border-[#1f1f1f]' : 'border-red-900/20 opacity-50'} flex flex-col md:flex-row justify-between items-start md:items-center gap-6 transition-all`}>
+            <div 
+              key={p.id} 
+              className="p-6 rounded-3xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-6 transition-all"
+              style={{ 
+                backgroundColor: cores.card, 
+                borderColor: p.status === 'Ativo' ? cores.borda : hexToRgba(cores.borda, 0.2),
+                opacity: p.status === 'Ativo' ? 1 : 0.6
+              }}
+            >
               <div className="flex-1">
                 <div className="flex items-center gap-3">
-                  <p className="font-black text-2xl uppercase tracking-tighter text-white">{p.nome}</p>
-                  <span className={`text-[10px] px-2 py-1 rounded-full font-black uppercase ${p.status === 'Ativo' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+                  <p className="font-black text-2xl uppercase tracking-tighter" style={{ color: cores.texto }}>{p.nome}</p>
+                  <span 
+                    className="text-[10px] px-2 py-1 rounded-full font-black uppercase text-white"
+                    style={{ backgroundColor: p.status === 'Ativo' ? '#16a34a' : cores.primaria }}
+                  >
                     {p.status}
                   </span>
                 </div>
-                <p className="text-sm text-red-500 font-bold mt-1">R$ {p.valor} <span className="text-gray-500 font-normal">/ mês</span></p>
-                <p className="text-xs text-gray-400 mt-2 italic border-b border-[#1f1f1f] pb-2">Limite de {p.cortes} agendamentos</p>
+                <p className="text-sm font-bold mt-1" style={{ color: cores.primaria }}>
+                  R$ {p.valor} <span className="font-normal" style={{ color: cores.textoSecundario }}>/ mês</span>
+                </p>
+                <p 
+                  className="text-xs mt-2 italic border-b pb-2" 
+                  style={{ color: cores.textoSecundario, borderColor: hexToRgba(cores.borda, 0.1) }}
+                >
+                  Limite de {p.cortes} agendamentos
+                </p>
                 
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {(p.servicosInclusos || []).length > 0 && p.servicosInclusos.map(s => <span key={s} className="bg-[#1c1c1c] text-gray-300 text-[10px] px-2 py-1 rounded-md uppercase font-bold">{s}</span>)}
-                  {/* Mostra os combos na vitrine também */}
-                  {(p.combos || []).length > 0 && p.combos.map((c, idx) => <span key={'c'+idx} className="bg-red-600/20 text-red-500 border border-red-600/30 text-[10px] px-2 py-1 rounded-md uppercase font-black">⭐ {c.nome}</span>)}
+                  {(p.servicosInclusos || []).length > 0 && p.servicosInclusos.map(s => (
+                    <span 
+                      key={s} 
+                      className="text-[10px] px-2 py-1 rounded-md uppercase font-bold"
+                      style={{ backgroundColor: hexToRgba(cores.borda, 0.05), color: cores.textoSecundario }}
+                    >
+                      {s}
+                    </span>
+                  ))}
+                  {(p.combos || []).length > 0 && p.combos.map((c, idx) => (
+                    <span 
+                      key={'c'+idx} 
+                      className="border text-[10px] px-2 py-1 rounded-md uppercase font-black"
+                      style={{ 
+                        backgroundColor: hexToRgba(cores.primaria, 0.1), 
+                        color: cores.primaria, 
+                        borderColor: hexToRgba(cores.primaria, 0.2) 
+                      }}
+                    >
+                      ⭐ {c.nome}
+                    </span>
+                  ))}
                 </div>
               </div>
               
               <div className="flex gap-2">
-                <button onClick={() => alternarStatus(p)} className="bg-[#1c1c1c] p-3 rounded-xl hover:bg-yellow-600 transition-all" title="Inativar/Ativar">👁️</button>
-                <button onClick={() => setForm(p)} className="bg-[#1c1c1c] p-3 rounded-xl hover:bg-white hover:text-black transition-all">✏️</button>
-                <button onClick={async () => { if(confirm("Apagar plano?")) { await deleteDoc(doc(db, "planos", p.id)); carregar(); } }} className="bg-[#1c1c1c] p-3 rounded-xl hover:bg-red-600 transition-all">🗑️</button>
+                <button onClick={() => alternarStatus(p)} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.textoSecundario }}>👁️</button>
+                <button onClick={() => setForm(p)} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.texto }}>✏️</button>
+                <button onClick={async () => { if(window.confirm("Apagar plano?")) { await deleteDoc(doc(db, "planos", p.id)); carregarDados(); } }} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.primaria }}>🗑️</button>
               </div>
             </div>
           ))}
         </div>
 
         {/* FORMULÁRIO */}
-        <div className="bg-[#111111] p-8 rounded-3xl border border-[#1f1f1f] h-fit sticky top-10 shadow-2xl">
-          <h2 className="text-xl font-black mb-6 uppercase italic text-red-600">{form.id ? 'Editar Plano' : 'Criar Novo Plano'}</h2>
+        <div 
+          className="p-8 rounded-3xl border h-fit sticky top-10 shadow-2xl"
+          style={{ backgroundColor: cores.card, borderColor: cores.borda }}
+        >
+          <h2 className="text-xl font-black mb-6 uppercase italic" style={{ color: cores.primaria }}>
+            {form.id ? 'Editar Plano' : 'Criar Novo Plano'}
+          </h2>
           <form onSubmit={salvar} className="space-y-4">
-            <input value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} placeholder="Nome do Plano" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" />
+            <input 
+              value={form.nome} 
+              onChange={e => setForm({...form, nome: e.target.value})} 
+              placeholder="Nome do Plano" 
+              className="w-full border p-4 rounded-2xl outline-none transition-all"
+              style={{ 
+                backgroundColor: hexToRgba(cores.fundo, 0.3), 
+                borderColor: cores.borda, 
+                color: cores.texto 
+              }} 
+            />
             
             <div className="grid grid-cols-2 gap-4">
-              <input value={form.valor} onChange={e => setForm({...form, valor: e.target.value})} placeholder="Valor (Ex: 80)" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" />
-              <input value={form.cortes} onChange={e => setForm({...form, cortes: e.target.value})} placeholder="Qtd Cortes" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl text-white outline-none focus:border-red-600" />
+              <input 
+                value={form.valor} 
+                onChange={e => setForm({...form, valor: e.target.value})} 
+                placeholder="Valor" 
+                className="w-full border p-4 rounded-2xl outline-none"
+                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
+              />
+              <input 
+                value={form.cortes} 
+                onChange={e => setForm({...form, cortes: e.target.value})} 
+                placeholder="Qtd Cortes" 
+                className="w-full border p-4 rounded-2xl outline-none"
+                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
+              />
             </div>
 
-            {/* SELEÇÃO DE SERVIÇOS AVULSOS */}
-            <div className="bg-[#0a0a0a] border border-[#1f1f1f] p-4 rounded-2xl">
-              <p className="text-[10px] text-gray-500 uppercase font-black mb-3">Serviços Base Cobertos:</p>
+            {/* SELEÇÃO DE SERVIÇOS */}
+            <div className="border p-4 rounded-2xl" style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: cores.borda }}>
+              <p className="text-[10px] uppercase font-black mb-3" style={{ color: cores.textoSecundario }}>Serviços Base Cobertos:</p>
               <div className="flex flex-col gap-2 max-h-32 overflow-y-auto pr-2 mb-2">
                 {servicosDisponiveis.map(s => (
                   <label key={s} className="flex items-center gap-3 cursor-pointer group">
-                    <input type="checkbox" checked={form.servicosInclusos.includes(s)} onChange={() => toggleServico(s)} className="w-4 h-4 accent-red-600" />
-                    <span className={`text-sm font-bold uppercase transition-colors ${form.servicosInclusos.includes(s) ? 'text-white' : 'text-gray-600 group-hover:text-gray-400'}`}>{s}</span>
+                    <input 
+                      type="checkbox" 
+                      checked={form.servicosInclusos.includes(s)} 
+                      onChange={() => toggleServico(s)} 
+                      className="w-4 h-4" 
+                      style={{ accentColor: cores.primaria }}
+                    />
+                    <span 
+                      className="text-sm font-bold uppercase transition-colors"
+                      style={{ color: form.servicosInclusos.includes(s) ? cores.texto : cores.textoSecundario }}
+                    >
+                      {s}
+                    </span>
                   </label>
                 ))}
               </div>
             </div>
 
-            {/* CRIAÇÃO DE COMBOS NA HORA */}
-            <div className="bg-red-600/5 border border-red-600/20 p-4 rounded-2xl">
-              <p className="text-[10px] text-red-500 uppercase font-black mb-3">Combos Exclusivos (Ocultos para não-assinantes):</p>
+            {/* CRIAÇÃO DE COMBOS */}
+            <div className="border p-4 rounded-2xl" style={{ backgroundColor: hexToRgba(cores.primaria, 0.05), borderColor: hexToRgba(cores.primaria, 0.2) }}>
+              <p className="text-[10px] uppercase font-black mb-3" style={{ color: cores.primaria }}>Combos Exclusivos:</p>
               
               <div className="flex gap-2 mb-3">
-                <input value={novoCombo.nome} onChange={e => setNovoCombo({...novoCombo, nome: e.target.value})} placeholder="Ex: Corte Máquina + Sobrancelha" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] p-3 rounded-xl text-white outline-none focus:border-red-600 text-xs" />
-                <input value={novoCombo.tempo} onChange={e => setNovoCombo({...novoCombo, tempo: e.target.value})} placeholder="Tempo" className="w-20 bg-[#0a0a0a] border border-[#1f1f1f] p-3 rounded-xl text-white outline-none focus:border-red-600 text-xs" />
-                <button type="button" onClick={adicionarCombo} className="bg-red-600 text-white font-black px-4 rounded-xl hover:bg-red-700">+</button>
+                <input 
+                  value={novoCombo.nome} 
+                  onChange={e => setNovoCombo({...novoCombo, nome: e.target.value})} 
+                  placeholder="Nome do Combo" 
+                  className="w-full border p-3 rounded-xl outline-none text-xs"
+                  style={{ backgroundColor: cores.card, borderColor: cores.borda, color: cores.texto }} 
+                />
+                <input 
+                  value={novoCombo.tempo} 
+                  onChange={e => setNovoCombo({...novoCombo, tempo: e.target.value})} 
+                  placeholder="Min" 
+                  className="w-20 border p-3 rounded-xl outline-none text-xs"
+                  style={{ backgroundColor: cores.card, borderColor: cores.borda, color: cores.texto }} 
+                />
+                <button 
+                  type="button" 
+                  onClick={adicionarCombo} 
+                  className="text-white font-black px-4 rounded-xl hover:opacity-80"
+                  style={{ backgroundColor: cores.primaria }}
+                >+</button>
               </div>
 
               {form.combos && form.combos.length > 0 && (
-                <div className="space-y-2 mt-4 pt-4 border-t border-red-600/20">
+                <div className="space-y-2 mt-4 pt-4 border-t" style={{ borderColor: hexToRgba(cores.primaria, 0.2) }}>
                   {form.combos.map((c, index) => (
-                    <div key={index} className="flex justify-between items-center bg-[#0a0a0a] border border-[#1f1f1f] p-2 px-3 rounded-xl">
+                    <div key={index} className="flex justify-between items-center border p-2 px-3 rounded-xl" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
                       <div>
-                        <p className="text-xs font-bold text-white uppercase">{c.nome}</p>
-                        <p className="text-[10px] text-gray-500">{c.tempo}</p>
+                        <p className="text-xs font-bold uppercase" style={{ color: cores.texto }}>{c.nome}</p>
+                        <p className="text-[10px]" style={{ color: cores.textoSecundario }}>{c.tempo}</p>
                       </div>
-                      <button type="button" onClick={() => removerCombo(index)} className="text-red-600 hover:text-red-400 text-xs font-black">✕</button>
+                      <button type="button" onClick={() => removerCombo(index)} className="text-xs font-black" style={{ color: cores.primaria }}>✕</button>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            <button type="submit" className="w-full bg-red-600 text-white font-black py-4 rounded-2xl hover:bg-red-700 uppercase tracking-widest mt-4 transition-all">
+            <button 
+              type="submit" 
+              className="w-full text-white font-black py-4 rounded-2xl hover:opacity-90 uppercase tracking-widest mt-4 transition-all shadow-lg"
+              style={{ backgroundColor: cores.primaria }}
+            >
               {form.id ? 'Salvar Mudanças' : 'Lançar Plano'}
             </button>
-            {form.id && <button type="button" onClick={() => setForm({id:null, nome:'', valor:'', cortes:'', status:'Ativo', servicosInclusos: [], combos: []})} className="w-full text-gray-500 text-xs font-bold mt-2 hover:text-white">Cancelar Edição</button>}
+            
+            {form.id && (
+              <button 
+                type="button" 
+                onClick={() => setForm({id:null, nome:'', valor:'', cortes:'', status:'Ativo', servicosInclusos: [], combos: []})} 
+                className="w-full text-xs font-bold mt-2 hover:opacity-70 transition-colors"
+                style={{ color: cores.textoSecundario }}
+              >
+                Cancelar Edição
+              </button>
+            )}
           </form>
         </div>
       </div>

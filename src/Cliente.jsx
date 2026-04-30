@@ -651,7 +651,7 @@ export default function Cliente({ servicos }) {
                   </button>
                 </form>
               </div>
-            )}
+            )} 
           </div>
         )}
       </div>

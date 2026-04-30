@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore' 
+import { collection, onSnapshot, query, doc, updateDoc } from 'firebase/firestore' 
 import { Search, X } from 'lucide-react'
-import AdminPagamento from './AdminPagamento' // Importando a nova tela
+import AdminPagamento from './AdminPagamento'
 
 const IconCheck = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
@@ -10,27 +10,45 @@ const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" he
 export default function AdminDashboard({ totalServicos }) {
   const [agendamentos, setAgendamentos] = useState([])
   const [mostrarFinalizados, setMostrarFinalizados] = useState(false)
-  const [agendamentoEmPagamento, setAgendamentoEmPagamento] = useState(null) // Novo estado para o pagamento
+  const [agendamentoEmPagamento, setAgendamentoEmPagamento] = useState(null)
   const [busca, setBusca] = useState('')
+  const [configCores, setConfigCores] = useState(null)
 
-  const carregarAgendamentos = async () => {
-    const snap = await getDocs(collection(db, "agendamentos"))
-    setAgendamentos(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  }
+  // 1. BUSCA PERSONALIZAÇÃO (CORES) DO FIREBASE
+  useEffect(() => {
+    const unsubCores = onSnapshot(doc(db, "configuracoes", "personalizacao"), (docSnap) => {
+      if (docSnap.exists()) {
+        setConfigCores(docSnap.data().cores); // Acessando o mapa 'cores' conforme imagem
+      }
+    });
+    return () => unsubCores();
+  }, []);
 
-  useEffect(() => { carregarAgendamentos() }, [])
+  // 2. BUSCA AGENDAMENTOS EM TEMPO REAL
+  useEffect(() => {
+    const q = query(collection(db, "agendamentos"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setAgendamentos(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsubscribe();
+  }, []);
 
-  // Esta função agora é chamada DEPOIS da tela de pagamento
   const concluirAtendimentoFinal = async (id) => {
-    await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" })
-    setAgendamentoEmPagamento(null)
-    carregarAgendamentos()
+    try {
+      await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
+      setAgendamentoEmPagamento(null);
+    } catch (error) {
+      console.error("Erro ao concluir:", error);
+    }
   }
 
   const excluirAgendamento = async (id) => {
     if (window.confirm("Deseja marcar este agendamento como Cancelado?")) {
-      await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" })
-      carregarAgendamentos()
+      try {
+        await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
+      } catch (error) {
+        console.error("Erro ao cancelar:", error);
+      }
     }
   }
 
@@ -51,7 +69,6 @@ export default function AdminDashboard({ totalServicos }) {
   return (
     <div className="space-y-6 animate-in fade-in duration-500 relative">
       
-      {/* Pop-up de Pagamento */}
       {agendamentoEmPagamento && (
         <AdminPagamento 
           agendamento={agendamentoEmPagamento} 
@@ -60,61 +77,114 @@ export default function AdminDashboard({ totalServicos }) {
         />
       )}
 
+      {/* HEADER PRINCIPAL */}
       <div className="flex justify-between items-start mb-10">
-        <h1 className="text-4xl font-black uppercase italic tracking-tighter">Minha <span className="text-red-600">Agenda</span></h1>
+        <h1 className="text-4xl font-black uppercase italic tracking-tighter" 
+            style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+          Minha <span style={{ color: configCores?.primaria || 'var(--cor-primaria)' }}>Agenda</span>
+        </h1>
         <button 
           onClick={() => setMostrarFinalizados(true)}
-          className="bg-[#111] border border-[#1f1f1f] hover:border-red-600 text-white text-[10px] font-black uppercase tracking-widest px-6 py-3 rounded-xl transition-all shadow-lg"
+          className="text-[10px] font-black uppercase tracking-widest px-6 py-3 rounded-xl transition-all shadow-lg hover:brightness-125 border"
+          style={{ 
+            backgroundColor: configCores?.card || 'var(--cor-card)', 
+            borderColor: configCores?.borda || 'var(--cor-borda)', 
+            color: configCores?.texto || 'var(--cor-texto-principal)' 
+          }}
         >
           Atendimentos Finalizados
         </button>
       </div>
       
+      {/* CARDS DE RESUMO */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-         <div className="bg-[#111111] border border-[#1f1f1f] p-6 rounded-2xl">
-            <p className="text-xs text-gray-500 uppercase font-black mb-2">Total Visível</p>
-            <p className="text-4xl font-black">{proximosClientes.length}</p>
+         <div className="p-6 rounded-2xl border" 
+              style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+            <p className="text-xs uppercase font-black mb-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Total Visível</p>
+            <p className="text-4xl font-black" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{proximosClientes.length}</p>
          </div>
-         <div className="bg-[#111111] border border-[#1f1f1f] p-6 rounded-2xl">
-            <p className="text-xs text-gray-500 uppercase font-black mb-2">Serviços Cadastrados</p>
-            <p className="text-4xl font-black">{totalServicos}</p>
+         <div className="p-6 rounded-2xl border" 
+              style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+            <p className="text-xs uppercase font-black mb-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Serviços Cadastrados</p>
+            <p className="text-4xl font-black" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{totalServicos}</p>
          </div>
       </div>
 
-      <h2 className="text-xl font-bold text-gray-500 mb-4 uppercase tracking-widest">Fila e Cancelados</h2>
+      <h2 className="text-xl font-bold mb-4 uppercase tracking-widest" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+        Fila e Cancelados
+      </h2>
       
+      {/* LISTA DE AGENDAMENTOS ATIVOS */}
       <div className="grid gap-4">
         {proximosClientes.map(ag => {
           const isCancelado = ag.status === 'Cancelado';
           return (
-            <div key={ag.id} className={`p-6 rounded-2xl border transition-all flex flex-col md:flex-row justify-between items-center gap-4 ${isCancelado ? 'bg-red-950/10 border-red-900/20 opacity-60' : 'bg-[#111111] border-[#1f1f1f] border-l-4 border-l-red-600'}`}>
-              <div className="flex-1 text-left"> {/* Alinhamento à esquerda garantido */}
+            <div 
+              key={ag.id} 
+              className={`p-6 rounded-2xl border transition-all flex flex-col md:flex-row justify-between items-center gap-4 ${isCancelado ? 'opacity-60' : ''}`}
+              style={{
+                backgroundColor: isCancelado ? 'rgba(0,0,0,0.05)' : (configCores?.card || 'var(--cor-card)'),
+                borderColor: isCancelado ? 'rgba(0,0,0,0.1)' : (configCores?.borda || 'var(--cor-borda)'),
+                borderLeftWidth: isCancelado ? '1px' : '4px',
+                borderLeftColor: isCancelado ? 'gray' : (configCores?.primaria || 'var(--cor-primaria)')
+              }}
+            >
+              <div className="flex-1 text-left">
                 <div className="flex items-center gap-2">
-                    <p className={`text-xl font-black uppercase ${isCancelado ? 'text-red-500 line-through' : 'text-white'}`}>{ag.clienteNome}</p>
-                    {isCancelado && <span className="bg-red-600 text-[8px] px-2 py-0.5 rounded-full font-black uppercase text-white">Cancelado</span>}
+                    <p className={`text-xl font-black uppercase ${isCancelado ? 'line-through' : ''}`} 
+                       style={{ color: isCancelado ? 'gray' : (configCores?.texto || 'var(--cor-texto-principal)') }}>
+                      {ag.clienteNome}
+                    </p>
+                    {isCancelado && (
+                      <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase" 
+                            style={{ backgroundColor: 'gray', color: '#ffffff' }}>
+                        Cancelado
+                      </span>
+                    )}
                 </div>
-                <p className="text-sm text-gray-400 mt-1">{ag.servico} com <span className="font-bold text-white">{ag.barbeiro}</span></p>
+                <p className="text-sm mt-1" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+                  {ag.servico} com <span className="font-bold" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{ag.barbeiro}</span>
+                </p>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-center px-4">
-                  {ag.data && <p className={`text-[11px] font-black uppercase tracking-widest mb-1 ${isCancelado ? 'text-gray-600' : 'text-white'}`}>{ag.data}</p>}
-                  <p className="text-[10px] text-gray-500 uppercase font-bold">Horário</p>
-                  <p className={`text-2xl font-black ${isCancelado ? 'text-gray-600' : 'text-white'}`}>{ag.hora}</p>
+                  {ag.data && (
+                    <p className="text-[11px] font-black uppercase tracking-widest mb-1" 
+                       style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                      {ag.data}
+                    </p>
+                  )}
+                  <p className="text-[10px] uppercase font-bold" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Horário</p>
+                  <p className="text-2xl font-black" 
+                     style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                    {ag.hora}
+                  </p>
                 </div>
                 <div className="flex gap-2">
-                  <a href={formatarWhatsApp(ag.clienteTelefone)} target="_blank" rel="noreferrer" className="bg-[#1c1c1c] border border-[#2a2a2a] p-3 rounded-xl hover:bg-green-600 transition-all"><IconWhatsApp /></a>
+                  <a href={formatarWhatsApp(ag.clienteTelefone)} target="_blank" rel="noreferrer" 
+                     className="p-3 rounded-xl hover:brightness-125 transition-all border"
+                     style={{ backgroundColor: configCores?.card || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                    <IconWhatsApp />
+                  </a>
                   
-                  {/* ALTERADO: Agora ao clicar no check, ele define o agendamento para pagamento */}
                   {!isCancelado && (
                     <button 
                       onClick={() => setAgendamentoEmPagamento(ag)} 
-                      className="bg-green-600 text-white p-3 rounded-xl hover:bg-green-500 transition-all"
+                      className="p-3 rounded-xl hover:brightness-110 transition-all shadow-md"
+                      style={{ backgroundColor: '#16a34a', color: '#ffffff' }}
                     >
                       <IconCheck />
                     </button>
                   )}
                   
-                  <button onClick={() => excluirAgendamento(ag.id)} className={`bg-[#1c1c1c] border border-[#2a2a2a] p-3 rounded-xl transition-all ${isCancelado ? 'opacity-20 cursor-not-allowed' : 'hover:bg-red-600'}`} disabled={isCancelado}>🗑️</button>
+                  <button 
+                    onClick={() => excluirAgendamento(ag.id)} 
+                    className={`p-3 rounded-xl transition-all border ${isCancelado ? 'opacity-20 cursor-not-allowed' : 'hover:brightness-125'}`} 
+                    disabled={isCancelado}
+                    style={{ backgroundColor: configCores?.card || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}
+                  >
+                    🗑️
+                  </button>
                 </div>
               </div>
             </div>
@@ -122,40 +192,72 @@ export default function AdminDashboard({ totalServicos }) {
         })}
       </div>
 
-      {/* MODAL DE HISTÓRICO (CÓDIGO ORIGINAL MANTIDO) */}
+      {/* MODAL DE HISTÓRICO - TOTALMENTE DINÂMICO */}
       {mostrarFinalizados && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-[#0a0a0a] border border-[#1f1f1f] w-full max-w-4xl max-h-[85vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl">
-            <div className="p-6 border-b border-[#1f1f1f] flex justify-between items-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-300"
+             style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}>
+          <div className="w-full max-w-4xl max-h-[85vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl border"
+               style={{ 
+                 backgroundColor: configCores?.fundo || 'var(--cor-fundo)', 
+                 borderColor: configCores?.borda || 'var(--cor-borda)' 
+               }}>
+            
+            <div className="p-6 border-b flex justify-between items-center" 
+                 style={{ borderColor: configCores?.borda || 'var(--cor-borda)' }}>
               <div>
-                <h2 className="text-2xl font-black uppercase italic text-white">Histórico <span className="text-green-500">Finalizados</span></h2>
+                <h2 className="text-2xl font-black uppercase italic" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                  Histórico <span style={{ color: configCores?.primaria || '#16a34a' }}>Finalizados</span>
+                </h2>
               </div>
-              <button onClick={() => setMostrarFinalizados(false)} className="p-2 hover:bg-red-600/10 rounded-full text-gray-500 hover:text-red-500 transition-all">
+              <button onClick={() => setMostrarFinalizados(false)} className="p-2 rounded-full transition-all hover:scale-110"
+                      style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
                 <X size={24} />
               </button>
             </div>
-            <div className="p-6 bg-[#111]/50">
+            
+            <div className="p-6" style={{ backgroundColor: configCores?.card || 'var(--cor-card)' }}>
                 <input 
                   type="text" 
-                  placeholder="Pesquisar..."
+                  placeholder="Pesquisar cliente ou serviço..."
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
-                  className="w-full bg-[#1c1c1c] border border-[#2a2a2a] rounded-2xl py-4 px-6 text-white outline-none focus:border-green-500 transition-all font-bold"
+                  className="w-full rounded-2xl py-4 px-6 outline-none transition-all font-bold border focus:brightness-110"
+                  style={{ 
+                    backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', 
+                    borderColor: configCores?.borda || 'var(--cor-borda)', 
+                    color: configCores?.texto || 'var(--cor-texto-principal)' 
+                  }}
                 />
             </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
               {atendimentosFinalizados.map(ag => (
-                <div key={ag.id} className="p-4 rounded-2xl border border-[#1f1f1f] bg-[#0d0d0d] flex justify-between items-center opacity-80">
-                  <div className="text-left"> {/* Garante alinhamento nos finalizados */}
-                    <p className="text-lg font-black uppercase text-green-500 line-through decoration-white/20">{ag.clienteNome}</p>
-                    <p className="text-[10px] text-gray-500 font-bold uppercase">{ag.servico} com <span className="text-white">{ag.barbeiro}</span></p>
+                <div key={ag.id} className="p-4 rounded-2xl border flex justify-between items-center opacity-80"
+                     style={{ 
+                       backgroundColor: configCores?.card || 'var(--cor-card)', 
+                       borderColor: configCores?.borda || 'var(--cor-borda)' 
+                     }}>
+                  <div className="text-left">
+                    <p className="text-lg font-black uppercase" 
+                       style={{ color: configCores?.primaria || '#16a34a' }}>
+                      {ag.clienteNome}
+                    </p>
+                    <p className="text-[10px] font-bold uppercase" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+                      {ag.servico} com <span style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{ag.barbeiro}</span>
+                    </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[11px] font-black text-white">{ag.data}</p>
-                    <p className="text-xl font-black text-gray-600">{ag.hora}</p>
+                    <p className="text-[11px] font-black" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{ag.data}</p>
+                    <p className="text-xl font-black" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{ag.hora}</p>
                   </div>
                 </div>
               ))}
+              
+              {atendimentosFinalizados.length === 0 && (
+                <p className="text-center font-bold text-sm" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+                  Nenhum atendimento finalizado encontrado.
+                </p>
+              )}
             </div>
           </div>
         </div>
