@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, deleteDoc, limit } from 'firebase/firestore'
+import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, deleteDoc, limit, setDoc } from 'firebase/firestore'
 import { Info } from 'lucide-react'
 
 const MAPA_DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
@@ -77,7 +77,6 @@ export default function Cliente({ servicos }) {
     carregarTudo()
   }, [])
 
-  // BUSCA AUTOMÁTICA DE NOME (ASSINANTE OU HISTÓRICO)
   useEffect(() => {
     const buscarNomeCliente = async () => {
       const tel = contato.telefone.trim()
@@ -145,7 +144,6 @@ export default function Cliente({ servicos }) {
       const q = query(collection(db, "agendamentos"), where("data", "==", dia.formatoAPI))
       const snap = await getDocs(q)
       const contagemHoras = {}
-      // FILTRO: Só conta como ocupado se não estiver cancelado
       snap.docs.filter(d => d.data().status !== 'Cancelado').forEach(d => {
         const h = d.data().hora
         contagemHoras[h] = (contagemHoras[h] || 0) + 1
@@ -161,7 +159,6 @@ export default function Cliente({ servicos }) {
         where("data", "==", dia.formatoAPI)
       )
       const snap = await getDocs(q)
-      // FILTRO: Horário só está ocupado se o status não for cancelado
       ocupados = snap.docs
         .filter(d => d.data().status !== 'Cancelado')
         .map(d => d.data().hora)
@@ -234,11 +231,9 @@ export default function Cliente({ servicos }) {
     setCarregandoHistorico(false)
   }
 
-  // MUDANÇA SOLICITADA: Agora altera status em vez de deletar
   const cancelarMeuAgendamento = async (agendamento) => {
     if(window.confirm(`Deseja cancelar o agendamento de ${agendamento.servico} do dia ${formatarDataAmigavel(agendamento.data)} às ${agendamento.hora}?`)) {
       try {
-        // Atualiza no banco para Cancelado
         await updateDoc(doc(db, "agendamentos", agendamento.id), { status: 'Cancelado' })
         
         if (agendamento.preco === 'PLANO' || agendamento.preco === 'PLANO ATIVO') {
@@ -250,7 +245,6 @@ export default function Cliente({ servicos }) {
           }
         }
 
-        // Atualiza a lista localmente para refletir o status sem sumir
         setMeusAgendamentos(prev => prev.map(a => 
           a.id === agendamento.id ? { ...a, status: 'Cancelado' } : a
         ))
@@ -292,6 +286,27 @@ export default function Cliente({ servicos }) {
     }
 
     try {
+      // --- LÓGICA PARA GARANTIR QUE O CLIENTE ESTEJA NA COLEÇÃO "clientes" ---
+      const clienteRef = doc(db, "clientes", contato.telefone);
+      const clienteSnap = await getDoc(clienteRef);
+
+      if (!clienteSnap.exists()) {
+        await setDoc(clienteRef, {
+          nome: contato.nome,
+          telefone: contato.telefone,
+          cortesRestantes: 0,
+          planoId: "",
+          planoNome: "",
+          totalVisitas: 1,
+          dataCadastro: new Date().toISOString()
+        });
+      } else {
+        // Se já existe, apenas incrementa as visitas (opcional)
+        const totalAtual = clienteSnap.data().totalVisitas || 0;
+        await updateDoc(clienteRef, { totalVisitas: totalAtual + 1 });
+      }
+      // -----------------------------------------------------------------------
+
       await addDoc(collection(db, "agendamentos"), {
         servico: escolha.servico.nome,
         preco: (estaInclusoNoPlano && perfil.cortesRestantes > 0) ? "PLANO ATIVO" : escolha.servico.preco,
@@ -308,7 +323,10 @@ export default function Cliente({ servicos }) {
         await updateDoc(doc(db, "clientes", perfil.telefone), { cortesRestantes: perfil.cortesRestantes - 1 })
       }
       setSucesso(true)
-    } catch (erro) { alert("Erro ao confirmar.") }
+    } catch (erro) { 
+      console.error(erro);
+      alert("Erro ao confirmar."); 
+    }
     setSalvando(false)
   }
 

@@ -11,6 +11,11 @@ import {
   ChevronRight, TrendingUp, Star 
 } from 'lucide-react'
 
+// IMPORTAÇÃO DOS NOVOS COMPONENTES
+import MediaPorBarbeiro from './MediaPorBarbeiro'
+import ClientesPorBarbeiro from './ClientesPorBarbeiro'
+import AtendimentosPorBarbeiro from './AtendimentosPorBarbeiro'
+
 const DIAS_DA_SEMANA = [
   { id: 'seg', nome: 'Segunda' }, { id: 'ter', nome: 'Terça' }, { id: 'qua', nome: 'Quarta' },
   { id: 'qui', nome: 'Quinta' }, { id: 'sex', nome: 'Sexta' }, { id: 'sab', nome: 'Sábado' }, { id: 'dom', nome: 'Domingo' },
@@ -28,7 +33,7 @@ const FotoPadrao = () => (
 )
 
 export default function AdminBarbeiros() {
-  const [secao, setSecao] = useState('equipe') // Controle de abas
+  const [secao, setSecao] = useState('equipe')
   const [barbeiros, setBarbeiros] = useState([])
   const [limite, setLimite] = useState(0)
   const [erro, setErro] = useState('') 
@@ -57,7 +62,6 @@ export default function AdminBarbeiros() {
     return () => { unsubBarbeiros(); unsubConfig(); }
   }, [])
 
-  // FUNÇÕES DE GESTÃO
   const solicitarUpgrade = async () => {
     if (enviandoSolicitacao) return;
     setEnviandoSolicitacao(true);
@@ -143,7 +147,6 @@ export default function AdminBarbeiros() {
   return (
     <div className="animate-in fade-in duration-500 pb-20 px-4">
       
-      {/* HEADER DINÂMICO */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
         <div>
           <h1 className="text-4xl font-black uppercase italic tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>
@@ -154,7 +157,6 @@ export default function AdminBarbeiros() {
           </p>
         </div>
 
-        {/* NAVEGAÇÃO DE ABAS */}
         <div className="flex flex-wrap gap-2 p-1.5 rounded-2xl border" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
           {[
             { id: 'equipe', label: 'Barbeiros', icon: UserCircle },
@@ -177,7 +179,6 @@ export default function AdminBarbeiros() {
         </div>
       </div>
 
-      {/* CONTEÚDO: LISTA DE BARBEIROS */}
       {secao === 'equipe' && (
         <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
           <div className="flex items-center justify-between px-2">
@@ -239,7 +240,6 @@ export default function AdminBarbeiros() {
               </div>
             ))}
 
-            {/* BOTAO ADICIONAR / UPGRADE */}
             {!limiteAtingido ? (
               <button onClick={prepararCriacao} 
                 className="border-2 border-dashed p-8 rounded-3xl flex flex-col items-center justify-center gap-3 group transition-all min-h-[220px] hover:brightness-110"
@@ -263,139 +263,98 @@ export default function AdminBarbeiros() {
         </div>
       )}
 
-      {/* SEÇÃO: MÉDIA POR BARBEIRO */}
-      {secao === 'media' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-bottom-4 duration-500">
-          {barbeiros.map(b => (
-            <div key={b.id} className="p-6 rounded-[2.5rem] border flex items-center justify-between" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-                   <Star size={18} className="text-amber-500 fill-amber-500" />
-                </div>
-                <div>
-                  <p className="font-black uppercase text-xs" style={{ color: 'var(--cor-texto-principal)' }}>{b.nome}</p>
-                  <p className="text-[9px] font-bold uppercase opacity-50">Avaliação Média</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-2xl font-black italic" style={{ color: 'var(--cor-primaria)' }}>4.9</p>
-                <p className="text-[8px] font-black uppercase tracking-widest text-green-500">Expetacular</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {secao === 'media' && <MediaPorBarbeiro barbeiros={barbeiros} />}
+      {secao === 'clientes' && <ClientesPorBarbeiro barbeiros={barbeiros} />}
+      {secao === 'atendimentos' && <AtendimentosPorBarbeiro barbeiros={barbeiros} />}
 
-      {/* SEÇÃO: CLIENTES POR BARBEIRO */}
-      {secao === 'clientes' && (
-        <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
-          {barbeiros.map(b => (
-            <div key={b.id} className="p-6 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
-              <div className="flex items-center gap-4 min-w-[200px]">
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: 'var(--cor-input-bg)' }}>
-                  <Users size={20} style={{ color: 'var(--cor-primaria)' }} />
-                </div>
-                <p className="font-black uppercase text-sm tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>{b.nome}</p>
-              </div>
-              
-              <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden flex">
-                <div className="h-full bg-blue-500" style={{ width: '70%' }} /> {/* Simulação de volume */}
-              </div>
-
-              <div className="flex items-center gap-6">
-                <div className="text-center">
-                  <p className="text-lg font-black" style={{ color: 'var(--cor-texto-principal)' }}>142</p>
-                  <p className="text-[8px] font-black uppercase opacity-50">Clientes Únicos</p>
-                </div>
-                <ChevronRight size={20} className="opacity-20" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* SEÇÃO: ATENDIMENTOS POR BARBEIRO */}
-      {secao === 'atendimentos' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom-4 duration-500">
-          {barbeiros.map(b => (
-            <div key={b.id} className="p-8 rounded-[3rem] border text-center space-y-4" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
-              <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--cor-primaria-opaca)' }}>
-                <Scissors size={24} style={{ color: 'var(--cor-primaria)' }} />
-              </div>
-              <div>
-                <p className="font-black uppercase text-lg tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>{b.nome}</p>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-green-500 flex items-center justify-center gap-1">
-                  <TrendingUp size={10} /> +12% este mês
-                </p>
-              </div>
-              <div className="pt-4 border-t" style={{ borderColor: 'var(--cor-borda)' }}>
-                <p className="text-4xl font-black italic tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>328</p>
-                <p className="text-[9px] font-black uppercase tracking-widest opacity-50 mt-1">Cortes Realizados</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* MODAL (MANTIDO IGUAL) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/95 backdrop-blur-md" onClick={fecharModal} />
-          <div className="w-full max-w-lg p-8 rounded-[40px] border relative shadow-2xl overflow-y-auto max-h-[90vh]"
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[3rem] border p-8 shadow-2xl"
                style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
             
-            <button onClick={fecharModal} className="absolute top-6 right-6" style={{ color: 'var(--cor-texto-secundario)' }}>
-              <X size={24} />
-            </button>
-
-            <h2 className="text-2xl font-black mb-8 uppercase italic" style={{ color: 'var(--cor-primaria)' }}>
-              {form.id ? 'Editar Perfil' : 'Novo Barbeiro'}
-            </h2>
-            
-            <form onSubmit={salvar} className="space-y-6">
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase ml-2 tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Nome Profissional</label>
-                  <input value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} 
-                         className="w-full border p-4 rounded-2xl outline-none" 
-                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} required />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase ml-2 tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Senha / PIN</label>
-                  <input value={form.senha} onChange={e => setForm({...form, senha: e.target.value})} 
-                         className="w-full border p-4 rounded-2xl outline-none" 
-                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} required />
-                </div>
-              </div>
-
-              <div className="pt-6 border-t" style={{ borderColor: 'var(--cor-borda)' }}>
-                <h3 className="text-[10px] font-black uppercase mb-4 flex items-center gap-2" style={{ color: 'var(--cor-texto-secundario)' }}>
-                  <Calendar size={12} style={{ color: 'var(--cor-primaria)' }} /> Dias de Atendimento
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {DIAS_DA_SEMANA.map((dia) => {
-                    const diaAtivo = form.diasTrabalho[dia.id];
-                    return (
-                      <button key={dia.id} type="button" onClick={() => toggleDia(dia.id)} 
-                              className="flex justify-between items-center p-3 rounded-xl border transition-all"
-                              style={diaAtivo ? 
-                                { backgroundColor: 'var(--cor-primaria-opaca)', borderColor: 'var(--cor-primaria-suave)', color: 'var(--cor-primaria)' } : 
-                                { backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-secundario)' }}>
-                        <span className="font-black text-[10px] uppercase">{dia.id}</span>
-                        {diaAtivo ? <Check size={12} /> : <X size={12} />}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {erro && <p className="text-[10px] font-black uppercase text-center" style={{ color: 'var(--cor-primaria)' }}>{erro}</p>}
-
-              <button type="submit" disabled={carregando} 
-                      className="w-full font-black py-4 rounded-2xl uppercase tracking-widest hover:brightness-110 transition-all"
-                      style={{ backgroundColor: 'var(--cor-primaria)', color: '#FFFFFF' }}>
-                {carregando ? 'Gravando...' : 'Confirmar'}
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>
+                {form.id ? 'Editar' : 'Novo'} <span style={{ color: 'var(--cor-primaria)' }}>Barbeiro</span>
+              </h2>
+              <button onClick={fecharModal} className="p-2 hover:opacity-50 transition-opacity">
+                <X size={24} style={{ color: 'var(--cor-texto-principal)' }} />
               </button>
+            </div>
+
+            <form onSubmit={salvar} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Nome Completo</label>
+                  <input required type="text" value={form.nome} onChange={e => setForm({...form, nome: e.target.value})}
+                         className="w-full px-6 py-4 rounded-2xl border outline-none transition-all focus:ring-2"
+                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)', '--tw-ring-color': 'var(--cor-primaria)' }} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Idade</label>
+                  <input required type="number" value={form.idade} onChange={e => setForm({...form, idade: e.target.value})}
+                         className="w-full px-6 py-4 rounded-2xl border outline-none"
+                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Data de Início</label>
+                  <input required type="date" value={form.dataInicio} onChange={e => setForm({...form, dataInicio: e.target.value})}
+                         className="w-full px-6 py-4 rounded-2xl border outline-none"
+                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Senha de Acesso (PIN)</label>
+                  <input required type="password" value={form.senha} onChange={e => setForm({...form, senha: e.target.value})}
+                         placeholder="Mínimo 6 caracteres"
+                         className="w-full px-6 py-4 rounded-2xl border outline-none"
+                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Instagram (sem @)</label>
+                <input type="text" value={form.instagram} onChange={e => setForm({...form, instagram: e.target.value})}
+                       className="w-full px-6 py-4 rounded-2xl border outline-none"
+                       style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+              </div>
+
+              <div className="space-y-4">
+                <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Dias de Trabalho</label>
+                <div className="flex flex-wrap gap-2">
+                  {DIAS_DA_SEMANA.map(dia => (
+                    <button key={dia.id} type="button" onClick={() => toggleDia(dia.id)}
+                            className="flex-1 min-w-[80px] py-3 rounded-xl font-black text-[10px] uppercase transition-all border"
+                            style={{ 
+                              backgroundColor: form.diasTrabalho[dia.id] ? 'var(--cor-primaria)' : 'transparent',
+                              borderColor: form.diasTrabalho[dia.id] ? 'var(--cor-primaria)' : 'var(--cor-borda)',
+                              color: form.diasTrabalho[dia.id] ? '#fff' : 'var(--cor-texto-secundario)'
+                            }}>
+                      {dia.nome}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {erro && (
+                <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-bold uppercase text-center">
+                  {erro}
+                </div>
+              )}
+
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={fecharModal}
+                        className="flex-1 py-4 rounded-2xl font-black uppercase text-xs tracking-widest"
+                        style={{ backgroundColor: 'var(--cor-input-bg)', color: 'var(--cor-texto-principal)' }}>
+                  Cancelar
+                </button>
+                <button type="submit" disabled={carregando}
+                        className="flex-[2] py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-orange-500/20 transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--cor-primaria)', color: '#fff' }}>
+                  {carregando ? 'Salvando...' : 'Confirmar Cadastro'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

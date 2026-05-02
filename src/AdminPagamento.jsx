@@ -1,19 +1,50 @@
 import React, { useState, useEffect } from 'react';
+import { db } from './firebase'; 
+import { doc, getDoc } from 'firebase/firestore';
 import { X, DollarSign, CreditCard, Smartphone, Receipt, Percent, CheckCircle, ExternalLink } from 'lucide-react';
 
 export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
   const [metodo, setMetodo] = useState('Pix');
   const [desconto, setDesconto] = useState(0);
   const [valorFinal, setValorFinal] = useState(0);
+  
+  // Inicializamos como null para evitar o flash das cores padrão
+  const [cores, setCores] = useState(null);
 
-  const isPlano = agendamento.preco === 'PLANO ATIVO' || agendamento.preco === 'INCLUSO NO PLANO';
+  const isPlano = agendamento?.preco === 'PLANO ATIVO' || agendamento?.preco === 'INCLUSO NO PLANO';
+
+  useEffect(() => {
+    const buscarCores = async () => {
+      try {
+        const docRef = doc(db, "configuracoes", "personalizacao");
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          const dados = docSnap.data();
+          if (dados.cores) {
+            setCores(dados.cores);
+          }
+        } else {
+          // Fallback silencioso caso o documento não exista no Firebase
+          // para o sistema não travar, mas você pode remover se quiser rigor total
+          console.warn("Configurações de cores não encontradas no Firebase.");
+        }
+      } catch (error) {
+        console.error("Erro ao buscar cores:", error);
+      }
+    };
+
+    buscarCores();
+  }, []);
 
   const converterPrecoParaNumero = (precoStr) => {
     if (isPlano) return 0;
+    if (typeof precoStr === 'number') return precoStr;
+    if (!precoStr) return 0;
     return parseFloat(precoStr.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
   };
 
-  const valorOriginal = converterPrecoParaNumero(agendamento.preco);
+  const valorOriginal = converterPrecoParaNumero(agendamento?.preco);
 
   useEffect(() => {
     if (isPlano) {
@@ -28,25 +59,11 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
     return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
-  // ==========================================
-  // FUNÇÃO DO PULO DO GATO (DEEP LINK)
-  // ==========================================
   const abrirMaquininha = () => {
-    // Formata o valor para o padrão que as APIs aceitam (ex: 50.00)
     const valorFormatado = valorFinal.toFixed(2);
     const descricao = `Corte: ${agendamento.servico}`;
-    
-    // URL para integração com Mercado Pago Point (via App)
-    // Nota: Essa é uma URL padrão de Intent para Android
     const urlMP = `mercadopago://payment?amount=${valorFormatado}&description=${descricao}&external_id=${agendamento.id}`;
-
-    // Tenta abrir o app
     window.location.href = urlMP;
-
-    // Caso o app não abra em 2 segundos, você pode avisar o usuário
-    setTimeout(() => {
-        console.log("Se o app não abriu, verifique se o Mercado Pago está instalado.");
-    }, 2000);
   };
 
   const enviarReciboWhatsApp = () => {
@@ -60,27 +77,45 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
       `📅 *Data:* ${agendamento.data}\n\n` +
       `Obrigado pela preferência! Até a próxima.`
     );
-    window.open(`https://wa.me/55${agendamento.clienteTelefone.replace(/\D/g, '')}?text=${mensagem}`, '_blank');
+    window.open(`https://wa.me/55${agendamento.clienteTelefone?.replace(/\D/g, '')}?text=${mensagem}`, '_blank');
   };
 
-  if (!agendamento) return null;
+  // Se as cores ainda não carregaram ou não há agendamento, não renderiza nada
+  // Isso impede que o usuário veja as cores "antigas" ou componentes sem estilo
+  if (!cores || !agendamento) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-[#0a0a0a] border border-[#1f1f1f] w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row">
+    // ANIMAÇÃO AQUI: z-[70], slide-in-from-bottom-12, zoom-in-95 e ease-out
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-in fade-in slide-in-from-bottom-12 zoom-in-95 duration-300 ease-out">
+      <div 
+        className="border w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row"
+        style={{ backgroundColor: cores.fundo, borderColor: cores.borda }}
+      >
         
         {/* Lado Esquerdo: Resumo */}
-        <div className="p-8 bg-[#111] md:w-5/12 border-b md:border-b-0 md:border-r border-[#1f1f1f] flex flex-col justify-center items-center text-center">
-            <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest mb-4">Resumo do Cliente</p>
-            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 border ${isPlano ? 'bg-green-600/10 border-green-600/20' : 'bg-red-600/10 border-red-600/20'}`}>
-                {isPlano ? <CheckCircle className="text-green-500" size={30} /> : <Receipt className="text-red-600" size={30} />}
+        <div 
+          className="p-8 md:w-5/12 border-b md:border-b-0 md:border-r flex flex-col justify-center items-center text-center"
+          style={{ backgroundColor: cores.card, borderColor: cores.borda }}
+        >
+            <p className="text-[10px] uppercase font-black tracking-widest mb-4" style={{ color: cores.textoSecundario }}>Resumo do Cliente</p>
+            <div 
+              className="w-16 h-16 rounded-full flex items-center justify-center mb-4 border"
+              style={{ 
+                backgroundColor: isPlano ? 'rgba(34, 197, 94, 0.1)' : `${cores.primaria}1a`, 
+                borderColor: isPlano ? 'rgba(34, 197, 94, 0.2)' : `${cores.primaria}33` 
+              }}
+            >
+                {isPlano ? <CheckCircle className="text-green-500" size={30} /> : <Receipt style={{ color: cores.primaria }} size={30} />}
             </div>
-            <h3 className="text-xl font-black text-white uppercase italic tracking-tighter truncate w-full px-2">{agendamento.clienteNome}</h3>
-            <p className="text-xs text-gray-400 mt-1 uppercase font-bold">{agendamento.servico}</p>
-            <div className="mt-8 pt-6 border-t border-[#1f1f1f] w-full">
-                <p className="text-[10px] text-gray-500 uppercase font-black mb-1">Valor do Serviço</p>
-                <p className={`text-xl font-bold ${isPlano ? 'text-green-500' : 'text-gray-300'}`}>
-                  {isPlano ? 'COBERTO PELO PLANO' : agendamento.preco}
+            <h3 className="text-xl font-black uppercase italic tracking-tighter truncate w-full px-2" style={{ color: cores.texto }}>
+              {agendamento.clienteNome}
+            </h3>
+            <p className="text-xs mt-1 uppercase font-bold" style={{ color: cores.textoSecundario }}>{agendamento.servico}</p>
+            
+            <div className="mt-8 pt-6 border-t w-full" style={{ borderColor: cores.borda }}>
+                <p className="text-[10px] uppercase font-black mb-1" style={{ color: cores.textoSecundario }}>Valor do Serviço</p>
+                <p className="text-xl font-bold" style={{ color: isPlano ? '#22c55e' : cores.texto }}>
+                  {isPlano ? 'COBERTO PELO PLANO' : formatarMoeda(valorOriginal)}
                 </p>
             </div>
         </div>
@@ -88,24 +123,31 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
         {/* Lado Direito: Ações de Pagamento */}
         <div className="p-8 md:w-7/12 flex flex-col space-y-5">
           <div className="flex justify-between items-center">
-            <h2 className="text-lg font-black uppercase italic text-white">Fluxo de <span className="text-red-600">Caixa</span></h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={24} /></button>
+            <h2 className="text-lg font-black uppercase italic" style={{ color: cores.texto }}>
+              Fluxo de <span style={{ color: cores.primaria }}>Caixa</span>
+            </h2>
+            <button onClick={onClose} className="hover:opacity-70 transition-opacity" style={{ color: cores.textoSecundario }}>
+              <X size={24} />
+            </button>
           </div>
 
           {!isPlano ? (
             <>
               <div>
-                <label className="text-[10px] text-gray-500 uppercase font-black mb-3 block">Forma de Recebimento</label>
+                <label className="text-[10px] uppercase font-black mb-3 block" style={{ color: cores.textoSecundario }}>Forma de Recebimento</label>
                 <div className="grid grid-cols-3 gap-2">
                   {['Pix', 'Dinheiro', 'Cartão'].map((m) => (
                     <button
                       key={m}
                       onClick={() => setMetodo(m)}
                       className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all font-black uppercase text-[10px] ${
-                        metodo === m 
-                        ? 'bg-red-600 border-red-600 text-white shadow-lg shadow-red-600/20 scale-105' 
-                        : 'bg-[#161616] border-[#222] text-gray-500 hover:border-gray-600'
+                        metodo === m ? 'text-white shadow-lg scale-105' : 'hover:border-gray-600'
                       }`}
+                      style={{ 
+                        backgroundColor: metodo === m ? cores.primaria : 'rgba(255,255,255,0.05)',
+                        borderColor: metodo === m ? cores.primaria : cores.borda,
+                        color: metodo === m ? '#fff' : cores.textoSecundario
+                      }}
                     >
                       {m === 'Pix' && <Smartphone size={18} />}
                       {m === 'Dinheiro' && <DollarSign size={18} />}
@@ -117,14 +159,15 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
               </div>
 
               <div className="relative">
-                <label className="text-[10px] text-gray-500 uppercase font-black mb-2 block">Dar Desconto (R$)</label>
+                <label className="text-[10px] uppercase font-black mb-2 block" style={{ color: cores.textoSecundario }}>Dar Desconto (R$)</label>
                 <div className="relative">
-                    <Percent className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={16} />
+                    <Percent className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: cores.textoSecundario }} size={16} />
                     <input 
                         type="number"
                         value={desconto}
                         onChange={(e) => setDesconto(Math.max(0, parseFloat(e.target.value) || 0))}
-                        className="w-full bg-[#161616] border border-[#222] rounded-2xl py-4 pl-12 pr-4 text-white font-black outline-none focus:border-red-600 transition-all placeholder:text-gray-800"
+                        className="w-full rounded-2xl py-4 pl-12 pr-4 font-black outline-none transition-all"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: `1px solid ${cores.borda}`, color: cores.texto }}
                         placeholder="0,00"
                     />
                 </div>
@@ -133,43 +176,50 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
           ) : (
             <div className="p-8 bg-green-600/5 border border-green-600/10 rounded-3xl flex flex-col items-center justify-center text-center">
                <CheckCircle className="text-green-500 mb-2" size={24} />
-               <p className="text-white font-black uppercase italic text-lg tracking-tighter">Cliente VIP</p>
-               <p className="text-[10px] text-gray-500 uppercase font-bold">O crédito será debitado do plano</p>
+               <p className="font-black uppercase italic text-lg tracking-tighter" style={{ color: cores.texto }}>Cliente VIP</p>
+               <p className="text-[10px] uppercase font-bold" style={{ color: cores.textoSecundario }}>O crédito será debitado do plano</p>
             </div>
           )}
 
-          <div className={`${isPlano ? 'bg-green-600/10' : 'bg-green-600/5'} border border-green-600/20 p-5 rounded-3xl text-center`}>
+          <div 
+            className="border p-5 rounded-3xl text-center"
+            style={{ backgroundColor: 'rgba(34, 197, 94, 0.05)', borderColor: 'rgba(34, 197, 94, 0.2)' }}
+          >
             <p className="text-[10px] text-green-600 font-black uppercase tracking-widest mb-1">
               {isPlano ? 'Status' : 'Total a Receber'}
             </p>
-            <p className="text-3xl font-black text-white tracking-tighter uppercase italic">
+            <p className="text-3xl font-black tracking-tighter uppercase italic" style={{ color: cores.texto }}>
               {isPlano ? 'Liberado' : formatarMoeda(valorFinal)}
             </p>
           </div>
 
-          {/* AÇÕES DE FINALIZAÇÃO */}
           <div className="space-y-2 pt-2">
-            
-            {/* BOTÃO MÁGICO: Só aparece para Cartão ou Pix e se não for plano */}
             {!isPlano && (metodo === 'Cartão' || metodo === 'Pix') && (
                 <button 
                     onClick={abrirMaquininha}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl uppercase tracking-widest transition-all flex items-center justify-center gap-2 text-xs shadow-lg shadow-blue-900/20"
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl uppercase tracking-widest transition-all flex items-center justify-center gap-2 text-xs"
                 >
                     <ExternalLink size={16} /> Abrir na Maquininha (MP)
                 </button>
             )}
 
             <button 
-              onClick={() => onConfirm(agendamento.id, { metodo, desconto, valorFinal, isPlano })}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-5 rounded-2xl uppercase tracking-widest transition-all shadow-xl shadow-red-900/20 active:scale-95"
+              onClick={() => onConfirm(agendamento.id, { 
+                metodo, 
+                desconto, 
+                valorFinal, 
+                isPlano 
+              })}
+              className="w-full text-white font-black py-5 rounded-2xl uppercase tracking-widest transition-all shadow-xl active:scale-95"
+              style={{ backgroundColor: cores.primaria }}
             >
               Finalizar no Sistema
             </button>
             
             <button 
               onClick={enviarReciboWhatsApp}
-              className="w-full bg-transparent border border-green-600/30 text-green-500 font-black py-3 rounded-2xl uppercase tracking-widest hover:bg-green-600/10 transition-all text-[10px] flex items-center justify-center gap-2"
+              className="w-full bg-transparent border text-green-500 font-black py-3 rounded-2xl uppercase tracking-widest hover:bg-green-600/10 transition-all text-[10px] flex items-center justify-center gap-2"
+              style={{ borderColor: 'rgba(34, 197, 94, 0.3)' }}
             >
               <Smartphone size={14} /> Enviar Comprovante (Whats)
             </button>

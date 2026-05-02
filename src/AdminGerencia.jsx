@@ -3,14 +3,16 @@ import { db } from './firebase'
 import { collection, getDocs, doc, setDoc, getDoc } from 'firebase/firestore'
 import { 
   Banknote, CreditCard, QrCode, Wallet, TrendingUp, 
-  Scissors, User, Percent, Settings2, Save 
+  Scissors, User, Percent, Settings2, Save, XCircle, CheckCircle2, Calendar
 } from 'lucide-react'
 
 export default function AdminGerencia() {
   const [stats, setStats] = useState({ 
-    faturamento: 0, 
+    faturamento: 0, // Agora representará o faturamento de HOJE
+    faturamentoMensal: 0, // Novo campo para o faturamento do MÊS
     total: 0,
     concluidos: 0,
+    cancelados: 0,
     financeiro: {
       dinheiro: { valor: 0, qtd: 0 },
       pix: { valor: 0, qtd: 0 },
@@ -19,7 +21,6 @@ export default function AdminGerencia() {
     barbeiros: {} 
   })
   
-  // Estado para as cores dinâmicas
   const [cores, setCores] = useState({
     primaria: '#922020',
     fundo: '#bababa',
@@ -33,7 +34,6 @@ export default function AdminGerencia() {
   const [editandoComissao, setEditandoComissao] = useState(false)
   const [carregando, setCarregando] = useState(true)
 
-  // Função auxiliar para transparência
   const hexToRgba = (hex, alpha) => {
     const r = parseInt(hex.slice(1, 3), 16)
     const g = parseInt(hex.slice(3, 5), 16)
@@ -43,20 +43,14 @@ export default function AdminGerencia() {
 
   const carregarDadosIniciais = async () => {
     setCarregando(true)
-    
-    // 1. Carrega Personalização de Cores
     const docConfig = await getDoc(doc(db, "configuracoes", "personalizacao"))
     if (docConfig.exists() && docConfig.data().cores) {
       setCores(docConfig.data().cores)
     }
-
-    // 2. Carrega Comissões
     const docComissao = await getDoc(doc(db, "configuracoes", "comissoes"))
     if (docComissao.exists()) {
       setComissoes(docComissao.data())
     }
-
-    // 3. Calcula Relatórios
     await calcularRelatorios()
   }
 
@@ -69,8 +63,15 @@ export default function AdminGerencia() {
   const calcularRelatorios = async () => {
     const snap = await getDocs(collection(db, "agendamentos"))
     
-    let somaTotal = 0
+    // Pegar data atual para filtros
+    const hojeStr = new Date().toLocaleDateString('pt-BR'); // "DD/MM/YYYY"
+    const mesAtual = hojeStr.split('/')[1];
+    const anoAtual = hojeStr.split('/')[2];
+
+    let somaHoje = 0
+    let somaMes = 0
     let totalConcluidos = 0
+    let totalCancelados = 0
     let financeiroMap = {
       dinheiro: { valor: 0, qtd: 0 },
       pix: { valor: 0, qtd: 0 },
@@ -83,7 +84,24 @@ export default function AdminGerencia() {
       const valStr = data.preco?.toString().replace(/\D/g, '') || '0'
       const valorReal = parseInt(valStr) / 100 
       
-      somaTotal += valorReal
+      const dataServico = data.data || ""; // Data salva no Firebase
+      const [diaDoc, mesDoc, anoDoc] = dataServico.split('/');
+
+      // Lógica de Faturamento por data (Soma apenas se estiver Concluído ou se você preferir soma total prevista)
+      if (data.status === 'Concluído') {
+        // Soma HOJE
+        if (dataServico === hojeStr) {
+          somaHoje += valorReal;
+        }
+        // Soma MÊS ATUAL
+        if (mesDoc === mesAtual && anoDoc === anoAtual) {
+          somaMes += valorReal;
+        }
+      }
+
+      if (data.status === 'Cancelado') {
+        totalCancelados++
+      }
 
       if (data.status === 'Concluído') {
         totalConcluidos++
@@ -111,9 +129,11 @@ export default function AdminGerencia() {
     })
 
     setStats({ 
-      faturamento: somaTotal, 
+      faturamento: somaHoje, 
+      faturamentoMensal: somaMes,
       total: snap.docs.length,
       concluidos: totalConcluidos,
+      cancelados: totalCancelados,
       financeiro: financeiroMap,
       barbeiros: agrupamentoBarbeiros
     })
@@ -152,13 +172,27 @@ export default function AdminGerencia() {
 
       {/* BLOCO 1: RESUMO GERAL */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        {/* CARD FATURAMENTO: HOJE E MENSAL */}
         <div 
-          className="p-8 rounded-3xl shadow-xl relative overflow-hidden group"
+          className="p-8 rounded-3xl shadow-xl relative overflow-hidden group flex flex-col justify-between"
           style={{ backgroundColor: cores.primaria, color: '#fff' }}
         >
           <TrendingUp className="absolute -right-4 -top-4 w-32 h-32 text-black opacity-10 group-hover:scale-110 transition-transform duration-500" />
-          <p className="text-xs font-black uppercase tracking-widest opacity-80 mb-2 relative z-10">Faturamento Previsto</p>
-          <p className="text-4xl font-black relative z-10">{formatarMoeda(stats.faturamento)}</p>
+          
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest opacity-80 mb-2 relative z-10">Faturamento Hoje</p>
+            <p className="text-4xl font-black relative z-10">{formatarMoeda(stats.faturamento)}</p>
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-white/20 relative z-10">
+             <div className="flex items-center gap-2">
+                <Calendar size={14} className="opacity-60" />
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black uppercase opacity-60">Total do Mês Atual</span>
+                  <span className="text-lg font-black">{formatarMoeda(stats.faturamentoMensal)}</span>
+                </div>
+             </div>
+          </div>
         </div>
 
         <div 
@@ -167,6 +201,23 @@ export default function AdminGerencia() {
         >
           <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: cores.textoSecundario }}>Total Agendados</p>
           <p className="text-5xl font-black" style={{ color: cores.texto }}>{stats.total}</p>
+          
+          <div className="flex gap-4 mt-4 pt-4 border-t" style={{ borderColor: hexToRgba(cores.borda, 0.1) }}>
+             <div className="flex items-center gap-1.5">
+                <XCircle size={12} className="text-red-500" />
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black uppercase opacity-50">Cancelados</span>
+                  <span className="text-sm font-black text-red-500">{stats.cancelados}</span>
+                </div>
+             </div>
+             <div className="flex items-center gap-1.5">
+                <CheckCircle2 size={12} className="text-blue-500" />
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black uppercase opacity-50">Total Líquido</span>
+                  <span className="text-sm font-black text-blue-500">{stats.total - stats.cancelados}</span>
+                </div>
+             </div>
+          </div>
         </div>
 
         <div 
@@ -186,7 +237,6 @@ export default function AdminGerencia() {
       <h2 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-center md:text-left" style={{ color: cores.textoSecundario }}>Divisão de Recebimento</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-14">
         
-        {/* DINHEIRO */}
         <div className="border p-6 rounded-3xl border-l-4 border-l-green-500" style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda }}>
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-green-500/10 rounded-2xl text-green-500"><Banknote size={24} /></div>
@@ -196,7 +246,6 @@ export default function AdminGerencia() {
           <p className="text-2xl font-black">{formatarMoeda(stats.financeiro.dinheiro.valor)}</p>
         </div>
 
-        {/* PIX */}
         <div className="border p-6 rounded-3xl border-l-4 border-l-teal-400" style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda }}>
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-teal-400/10 rounded-2xl text-teal-400"><QrCode size={24} /></div>
@@ -206,7 +255,6 @@ export default function AdminGerencia() {
           <p className="text-2xl font-black">{formatarMoeda(stats.financeiro.pix.valor)}</p>
         </div>
 
-        {/* CARTÃO */}
         <div className="border p-6 rounded-3xl border-l-4 border-l-blue-400" style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda }}>
           <div className="flex items-center justify-between mb-4">
             <div className="p-3 bg-blue-400/10 rounded-2xl text-blue-400"><CreditCard size={24} /></div>
@@ -215,7 +263,6 @@ export default function AdminGerencia() {
           <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: cores.textoSecundario }}>Cartão (Créd/Déb)</p>
           <p className="text-2xl font-black">{formatarMoeda(stats.financeiro.cartao.valor)}</p>
         </div>
-
       </div>
 
       {/* BLOCO 3: BARBEIROS E COMISSÕES */}
