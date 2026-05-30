@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, onSnapshot, query, doc, updateDoc } from 'firebase/firestore' 
-import { Search, X, Plus, Clock } from 'lucide-react'
+import { Search, X, Plus, Clock, CalendarDays } from 'lucide-react'
 import AdminPagamento from './AdminPagamento'
 import Comanda from './Comanda'
 
@@ -14,10 +14,13 @@ export default function AdminDashboard({ totalServicos }) {
   const [agendamentoEmPagamento, setAgendamentoEmPagamento] = useState(null)
   const [busca, setBusca] = useState('')
   const [configCores, setConfigCores] = useState(null)
-  const [configHorarios, setConfigHorarios] = useState(null) // NOVO: Estado para os horários
   
+  const [configAgenda, setConfigAgenda] = useState(null) 
   const [barbeiros, setBarbeiros] = useState([])
   const [mostrarComanda, setMostrarComanda] = useState(false)
+  
+  // NOVO ESTADO: Data selecionada para a visualização da agenda (inicia hoje)
+  const [dataSelecionada, setDataSelecionada] = useState(new Date())
 
   // 1. BUSCA PERSONALIZAÇÃO (CORES)
   useEffect(() => {
@@ -27,13 +30,12 @@ export default function AdminDashboard({ totalServicos }) {
     return () => unsubCores();
   }, []);
 
-  // 2. BUSCA CONFIGURAÇÕES DE HORÁRIOS (NOVO)
+  // 2. BUSCA CONFIGURAÇÕES DE HORÁRIOS
   useEffect(() => {
-    // ATENÇÃO: Verifique se o caminho "configuracoes/horarios" bate com o seu banco de dados
-    const unsubHorarios = onSnapshot(doc(db, "configuracoes", "horarios"), (docSnap) => {
-      if (docSnap.exists()) setConfigHorarios(docSnap.data());
+    const unsubAgenda = onSnapshot(doc(db, "configuracoes", "agenda"), (docSnap) => {
+      if (docSnap.exists()) setConfigAgenda(docSnap.data());
     });
-    return () => unsubHorarios();
+    return () => unsubAgenda();
   }, []);
 
   // 3. BUSCA AGENDAMENTOS EM TEMPO REAL
@@ -75,48 +77,78 @@ export default function AdminDashboard({ totalServicos }) {
 
   const formatarWhatsApp = (numero) => `https://wa.me/55${numero.replace(/\D/g, '')}`
 
-  // FUNÇÃO QUE GERA A GRADE DE HORÁRIOS DE HOJE BASEADA NO FIREBASE
-  const gerarGradeDoDia = () => {
-    // Se ainda não carregou as config, retorna um array vazio temporário
-    if (!configHorarios || !configHorarios.dias) return []; 
+  // FUNÇÕES DE DATA PARA A NAVEGAÇÃO
+  const getFormatosData = (dataBase) => {
+    const ano = dataBase.getFullYear();
+    const mes = String(dataBase.getMonth() + 1).padStart(2, '0');
+    const dia = String(dataBase.getDate()).padStart(2, '0');
+    return {
+      iso: `${ano}-${mes}-${dia}`,
+      br: `${dia}/${mes}/${ano}`
+    }
+  }
 
-    const diasDaSemanaMap = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
-    const diaHojeStr = diasDaSemanaMap[new Date().getDay()]; // Descobre que dia é hoje
-    const configDeHoje = configHorarios.dias[diaHojeStr];
+  const gerarProximosDias = () => {
+    return Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+  }
 
-    if (!configDeHoje || !configDeHoje.ativo) return []; // Retorna vazio se a barbearia estiver fechada hoje
+  const diasSemana = gerarProximosDias();
+  const nomesDiasCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-    // Pega o intervalo configurado ou usa 30 como fallback de segurança
-    const intervaloMinutos = parseInt(configHorarios.intervalo) || 30; 
+  // FUNÇÃO QUE GERA A GRADE BASEADA NA DATA SELECIONADA
+  const gerarGradeDaData = (dataAlvo) => {
+    if (!configAgenda || !configAgenda.horariosPorDia) return []; 
+
+    const diaNum = dataAlvo.getDay(); 
+    const formatoISO = getFormatosData(dataAlvo).iso;
+
+    // 1. Descobre qual é o número da semana no mês (ex: 1, 2, 3, 4 ou 5)
+    const ocorrenciaSemana = Math.ceil(dataAlvo.getDate() / 7);
+
+    // 2. Busca se existe uma regra dinâmica cadastrada para essa semana e dia
+    const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
+        r.diaSemana === diaNum && r.semanas.includes(ocorrenciaSemana)
+    );
+
+    // 3. Aplica a hierarquia (Exceção Data Exata > Regra Dinâmica > Regra Padrão do dia)
+    const regraDoDia = configAgenda.excecoes?.[formatoISO] || regraSemanaDinamica || configAgenda.horariosPorDia[diaNum];
+
+    if (!regraDoDia || !regraDoDia.ativo) return []; 
+
+    const intervaloMinutos = parseInt(configAgenda.intervalo) || 30; 
     let grade = [];
 
-    // Função interna para calcular os horários de um turno
     const calcularTurno = (horaInicio, horaFim) => {
       if (!horaInicio || !horaFim) return;
       
       let [hAtual, mAtual] = horaInicio.split(':').map(Number);
       let [hFinal, mFinal] = horaFim.split(':').map(Number);
       
-      let tempoAtualEmMinutos = (hAtual * 60) + mAtual;
-      const tempoFinalEmMinutos = (hFinal * 60) + mFinal;
+      let atual = (hAtual * 60) + mAtual;
+      const totalFim = (hFinal * 60) + mFinal;
 
-      while (tempoAtualEmMinutos <= tempoFinalEmMinutos) {
-        const horaFormatada = String(Math.floor(tempoAtualEmMinutos / 60)).padStart(2, '0');
-        const minutoFormatado = String(tempoAtualEmMinutos % 60).padStart(2, '0');
+      while (atual + intervaloMinutos <= totalFim) {
+        const horaFormatada = String(Math.floor(atual / 60)).padStart(2, '0');
+        const minutoFormatado = String(atual % 60).padStart(2, '0');
         grade.push(`${horaFormatada}:${minutoFormatado}`);
-        tempoAtualEmMinutos += intervaloMinutos;
+        atual += intervaloMinutos;
       }
     };
 
-    // Calcula manhã e tarde
-    calcularTurno(configDeHoje.manhaInicio, configDeHoje.manhaFim);
-    calcularTurno(configDeHoje.tardeInicio, configDeHoje.tardeFim);
+    calcularTurno(regraDoDia.t1Ini, regraDoDia.t1Fim);
+    calcularTurno(regraDoDia.t2Ini, regraDoDia.t2Fim);
 
-    // Remove duplicatas caso a pessoa coloque horários colados
     return [...new Set(grade)];
   }
 
-  const horariosDoDia = gerarGradeDoDia();
+  const formatosSel = getFormatosData(dataSelecionada);
+  const formatosHoje = getFormatosData(new Date());
+  const isHoje = formatosSel.iso === formatosHoje.iso;
+  const horariosDaData = gerarGradeDaData(dataSelecionada);
 
   const proximosClientes = agendamentos
     .filter(ag => ag.status !== 'Concluído')
@@ -131,8 +163,9 @@ export default function AdminDashboard({ totalServicos }) {
     .sort((a, b) => (b.data || "").localeCompare(a.data || "") || (b.hora || "").localeCompare(a.hora || ""))
 
   const dataHojeObj = new Date();
-  const hojeFormatoBR = dataHojeObj.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-  const hojeFormatoISO = dataHojeObj.toISOString().split('T')[0];
+  const horaSpString = dataHojeObj.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  const [hAtual, mAtual] = horaSpString.split(':').map(Number);
+  const minutosAtuais = hAtual * 60 + mAtual;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 relative">
@@ -146,16 +179,16 @@ export default function AdminDashboard({ totalServicos }) {
       )}
 
       {mostrarComanda && (
-  <Comanda 
-    configCores={configCores}
-    barbeiros={barbeiros} // (opcional, mas útil se for usar dentro da comanda)
-    onClose={() => setMostrarComanda(false)}
-    onAbrirPagamento={(dados) => {
-      setAgendamentoEmPagamento(dados)
-      setMostrarComanda(false)
-    }}
-  />
-)}
+        <Comanda 
+          configCores={configCores}
+          barbeiros={barbeiros} 
+          onClose={() => setMostrarComanda(false)}
+          onAbrirPagamento={(dados) => {
+            setAgendamentoEmPagamento(dados)
+            setMostrarComanda(false)
+          }}
+        />
+      )}
 
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
         <h1 className="text-4xl font-black uppercase italic tracking-tighter" 
@@ -202,17 +235,62 @@ export default function AdminDashboard({ totalServicos }) {
          </div>
       </div>
 
-      <h2 className="text-xl font-bold mb-4 uppercase tracking-widest flex items-center gap-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
-        <Clock size={20} /> Fila de Hoje por Barbeiro
-      </h2>
+      <div className="flex items-center justify-between mt-12 mb-4">
+        <h2 className="text-xl font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+          <CalendarDays size={20} /> Fila por Barbeiro
+        </h2>
+      </div>
+
+      {/* SELETOR DE DIAS DA SEMANA */}
+      <div className="flex gap-3 overflow-x-auto pb-4 custom-scrollbar mb-4">
+        {diasSemana.map((dia, idx) => {
+          const dadosDia = getFormatosData(dia);
+          const isSelected = dadosDia.iso === formatosSel.iso;
+          
+          return (
+            <button
+              key={idx}
+              onClick={() => setDataSelecionada(dia)}
+              className={`min-w-[85px] p-3 rounded-2xl border flex flex-col items-center justify-center transition-all ${isSelected ? 'shadow-md scale-105' : 'opacity-60 hover:opacity-100'}`}
+              style={{
+                backgroundColor: isSelected ? (configCores?.primaria || 'var(--cor-primaria)') : (configCores?.card || 'var(--cor-card)'),
+                borderColor: isSelected ? (configCores?.primaria || 'var(--cor-primaria)') : (configCores?.borda || 'var(--cor-borda)'),
+                color: isSelected ? '#ffffff' : (configCores?.texto || 'var(--cor-texto-principal)')
+              }}
+            >
+              <span className="text-[10px] uppercase font-black tracking-widest mb-1">
+                {idx === 0 ? 'Hoje' : nomesDiasCurto[dia.getDay()]}
+              </span>
+              <span className="text-lg font-bold">
+                {dia.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+              </span>
+            </button>
+          )
+        })}
+      </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {barbeiros.map(b => {
-          const agendamentosHojeBarbeiro = proximosClientes.filter(ag => 
+          // Filtra os agendamentos específicos do barbeiro na data selecionada
+          const agendamentosBarbeiro = proximosClientes.filter(ag => 
             ag.barbeiro === b.nome && 
             ag.status !== 'Cancelado' &&
-            (ag.data === hojeFormatoBR || ag.data === hojeFormatoISO)
+            (ag.data === formatosSel.br || ag.data === formatosSel.iso)
           );
+
+          // Oculta horários livres que já passaram (SOMENTE SE A DATA SELECIONADA FOR HOJE)
+          const horariosFiltrados = horariosDaData.filter(hora => {
+            const ocupado = agendamentosBarbeiro.find(ag => ag.hora === hora);
+            if (ocupado) return true; 
+
+            if (isHoje) {
+              const [hSlot, mSlot] = hora.split(':').map(Number);
+              const minutosSlot = (hSlot * 60) + mSlot;
+              return minutosSlot >= minutosAtuais; 
+            }
+
+            return true; // Se for um dia futuro, mostra tudo
+          });
 
           return (
             <div key={b.id} className="p-5 rounded-[2rem] border" 
@@ -225,25 +303,27 @@ export default function AdminDashboard({ totalServicos }) {
                 </div>
                 <div>
                   <p className="font-black uppercase text-sm tracking-tighter" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{b.nome}</p>
-                  <p className="text-[9px] font-black uppercase opacity-50">Agenda Diária</p>
+                  <p className="text-[9px] font-black uppercase opacity-50">{formatosSel.br}</p>
                 </div>
               </div>
 
               <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
-                {horariosDoDia.length === 0 ? (
-                  <p className="text-center text-xs font-bold opacity-50 py-4">Barbearia fechada ou sem horários configurados para hoje.</p>
+                {horariosDaData.length === 0 ? (
+                  <p className="text-center text-xs font-bold opacity-50 py-4">Barbearia fechada ou sem horários configurados para este dia.</p>
+                ) : horariosFiltrados.length === 0 ? (
+                  <p className="text-center text-xs font-bold opacity-50 py-4">Sem mais horários pendentes hoje.</p>
                 ) : (
-                  horariosDoDia.map(hora => {
-                    const ocupado = agendamentosHojeBarbeiro.find(ag => ag.hora === hora);
+                  horariosFiltrados.map(hora => {
+                    const ocupado = agendamentosBarbeiro.find(ag => ag.hora === hora);
 
                     return (
                       <div key={hora} className="flex justify-between items-center p-3 rounded-2xl text-xs transition-all border"
-                           style={{ 
-                             backgroundColor: ocupado ? 'rgba(0,0,0,0.1)' : configCores?.fundo || 'var(--cor-input-bg)',
-                             borderColor: configCores?.borda || 'var(--cor-borda)',
-                             borderLeftWidth: ocupado ? '4px' : '1px',
-                             borderLeftColor: ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
-                           }}>
+                            style={{ 
+                              backgroundColor: ocupado ? 'rgba(0,0,0,0.1)' : configCores?.fundo || 'var(--cor-input-bg)',
+                              borderColor: configCores?.borda || 'var(--cor-borda)',
+                              borderLeftWidth: ocupado ? '4px' : '1px',
+                              borderLeftColor: ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
+                            }}>
                         <span className="font-black" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{hora}</span>
                         
                         {ocupado ? (
@@ -349,12 +429,12 @@ export default function AdminDashboard({ totalServicos }) {
 
       {mostrarFinalizados && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-300"
-             style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}>
+              style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}>
           <div className="w-full max-w-4xl max-h-[85vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl border"
-               style={{ 
-                 backgroundColor: configCores?.fundo || 'var(--cor-fundo)', 
-                 borderColor: configCores?.borda || 'var(--cor-borda)' 
-               }}>
+                style={{ 
+                  backgroundColor: configCores?.fundo || 'var(--cor-fundo)', 
+                  borderColor: configCores?.borda || 'var(--cor-borda)' 
+                }}>
             
             <div className="p-6 border-b flex justify-between items-center" 
                  style={{ borderColor: configCores?.borda || 'var(--cor-borda)' }}>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { db } from './firebase' 
+import { db } from './firebase' // Removido o storage daqui
 import { 
   collection, addDoc, deleteDoc, 
   doc, updateDoc, onSnapshot, serverTimestamp 
@@ -7,7 +7,7 @@ import {
 import { 
   Plus, X, Package, Search, 
   Trash2, Edit3, Layers, BarChart3, 
-  Minus, ArrowDownUp, AlertCircle
+  Minus, ArrowDownUp, AlertCircle, UploadCloud
 } from 'lucide-react'
 
 export default function AdminProdutos() {
@@ -21,12 +21,15 @@ export default function AdminProdutos() {
   const [configCores, setConfigCores] = useState(null)
   const [novaCat, setNovaCat] = useState('')
   
+  // ESTADOS PARA UPLOAD DE IMAGEM
+  const [arquivoImagem, setArquivoImagem] = useState(null)
+  const [previewLocal, setPreviewLocal] = useState(null)
+  
   const formInicial = { 
     id: null, nome: '', preco: '', estoque: '', categoria: '', foto: '' 
   }
   const [form, setForm] = useState(formInicial)
 
-  // 1. BUSCA PERSONALIZAÇÃO
   useEffect(() => {
     const unsubCores = onSnapshot(doc(db, "configuracoes", "personalizacao"), (docSnap) => {
       if (docSnap.exists()) setConfigCores(docSnap.data().cores);
@@ -34,7 +37,6 @@ export default function AdminProdutos() {
     return () => unsubCores();
   }, []);
 
-  // 2. BUSCA PRODUTOS (CORRIGIDO: O id do firebase agora sempre sobrescreve qualquer bug no data)
   useEffect(() => {
     const unsubProd = onSnapshot(collection(db, "produtos"), (snap) => {
       setProdutos(snap.docs.map(d => ({ ...d.data(), id: d.id })))
@@ -42,7 +44,6 @@ export default function AdminProdutos() {
     return () => unsubProd()
   }, [])
 
-  // 3. BUSCA CATEGORIAS
   useEffect(() => {
     const unsubCat = onSnapshot(collection(db, "categorias"), (snap) => {
       setCategorias(snap.docs.map(d => ({ ...d.data(), id: d.id })))
@@ -53,33 +54,67 @@ export default function AdminProdutos() {
   const fecharModal = () => {
     setIsModalOpen(false)
     setForm(formInicial)
+    setArquivoImagem(null)
+    setPreviewLocal(null)
   }
 
   const prepararEdicao = (p) => {
     setForm(p)
+    setPreviewLocal(p.foto || null) 
+    setArquivoImagem(null)
     setIsModalOpen(true)
   }
 
-  // SALVAR NOVO OU EDITAR COMPLETO (CORRIGIDO)
+  const handleFileChange = (e) => {
+    if (e.target.files[0]) {
+      const file = e.target.files[0]
+      setArquivoImagem(file)
+      setPreviewLocal(URL.createObjectURL(file)) 
+    }
+  }
+
   const salvarProduto = async (e) => {
     e.preventDefault()
     setCarregando(true)
+    
     try {
-      // Removemos o id do formulário antes de preparar os dados para evitar salvar 'id: null' no banco
-      const { id, ...restoForm } = form;
+      let urlFinalFoto = form.foto;
+
+      // LÓGICA DO IMGBB
+      if (arquivoImagem) {
+        // MUDE ESTA LINHA: COLE SUA CHAVE DE API AQUI ENTRE AS ASPAS SIMPLES
+        const IMGBB_API_KEY = 'f172041aaa9358b02a0ed5e94e90960b'; 
+        
+        const formData = new FormData();
+        formData.append('image', arquivoImagem);
+
+        const respostaImgbb = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const dadosRetorno = await respostaImgbb.json();
+
+        if (dadosRetorno.success) {
+          urlFinalFoto = dadosRetorno.data.url; // Pega o link definitivo da imagem
+        } else {
+          throw new Error("Falha ao fazer upload da imagem no servidor.");
+        }
+      }
+
+      const { id, foto, ...restoForm } = form; 
       
       const dados = {
         ...restoForm,
+        foto: urlFinalFoto,
         preco: parseFloat(form.preco || 0),
         estoque: parseInt(form.estoque || 0),
         atualizadoEm: serverTimestamp()
       }
 
       if (id) {
-        // Se tem ID, é atualização
         await updateDoc(doc(db, "produtos", id), dados)
       } else {
-        // Se não tem ID, é novo (e não enviamos a propriedade id junto)
         await addDoc(collection(db, "produtos"), { ...dados, criadoEm: serverTimestamp() })
       }
       fecharModal()
@@ -90,13 +125,8 @@ export default function AdminProdutos() {
     }
   }
 
-  // EXCLUIR PRODUTO INTEIRO
   const excluirProduto = async (id) => {
-    if(!id) {
-      alert("Erro de referência: ID do produto não encontrado.");
-      return;
-    }
-    
+    if(!id) return;
     if(window.confirm("Atenção: Deseja realmente EXCLUIR este produto permanentemente?")) {
       try {
         await deleteDoc(doc(db, "produtos", id))
@@ -106,10 +136,8 @@ export default function AdminProdutos() {
     }
   }
 
-  // AJUSTAR ESTOQUE INLINE (+ OU -)
   const ajustarEstoque = async (produto, variacao) => {
     if(!produto.id) return;
-    
     const novoEstoque = parseInt(produto.estoque) + variacao;
     if (novoEstoque < 0) return; 
     
@@ -135,7 +163,6 @@ export default function AdminProdutos() {
 
   const totalGeralEstoque = produtos.reduce((acc, p) => acc + (Number(p.preco || 0) * Number(p.estoque || 0)), 0)
 
-  // LÓGICA DE FILTRO E ORDENAÇÃO
   let produtosExibicao = produtos.filter(p => 
     (p.nome || '').toLowerCase().includes(busca.toLowerCase()) || 
     (p.categoria || '').toLowerCase().includes(busca.toLowerCase())
@@ -218,7 +245,6 @@ export default function AdminProdutos() {
         </div>
       </div>
 
-      {/* BOTÕES DE MENUS ADICIONAIS */}
       <div className="flex flex-wrap gap-4 mb-8">
         <button 
           onClick={() => setMenuAtivo(menuAtivo === 'categorias' ? null : 'categorias')}
@@ -244,7 +270,6 @@ export default function AdminProdutos() {
         </button>
       </div>
 
-      {/* PAINEL DE CATEGORIAS */}
       {menuAtivo === 'categorias' && (
         <div className="mb-8 p-6 rounded-[2rem] border animate-in slide-in-from-top duration-300"
              style={{ backgroundColor: configCores?.card || '#FFF', borderColor: configCores?.borda }}>
@@ -270,7 +295,6 @@ export default function AdminProdutos() {
         </div>
       )}
 
-      {/* PAINEL DE RELATÓRIO */}
       {menuAtivo === 'estoque' && (
         <div className="mb-8 p-6 rounded-[2rem] border animate-in slide-in-from-top duration-300 overflow-hidden"
              style={{ backgroundColor: configCores?.card || '#FFF', borderColor: configCores?.borda }}>
@@ -372,7 +396,6 @@ export default function AdminProdutos() {
                 </div>
               </div>
 
-              {/* BOTÕES DE AÇÃO */}
               <div className="flex gap-2 mt-4 pt-4 border-t border-dashed" style={{ borderColor: configCores?.borda }}>
                 <button 
                   onClick={() => prepararEdicao(p)} 
@@ -410,6 +433,32 @@ export default function AdminProdutos() {
             </div>
 
             <form onSubmit={salvarProduto} className="flex-1 overflow-y-auto p-8 space-y-6">
+              
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold uppercase italic ml-2" style={{ color: configCores?.primaria }}>Foto do Produto</label>
+                <div className="relative border-2 border-dashed rounded-2xl flex flex-col items-center justify-center p-6 text-center transition-all hover:opacity-70 overflow-hidden" 
+                     style={{ borderColor: configCores?.borda, backgroundColor: configCores?.fundo, color: configCores?.texto }}>
+                  
+                  <input 
+                    type="file" 
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
+                  />
+                  
+                  {previewLocal ? (
+                    <div className="h-32 w-32 rounded-xl overflow-hidden shadow-md">
+                      <img src={previewLocal} alt="Preview" className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center opacity-50 relative z-10 pointer-events-none">
+                      <UploadCloud size={32} className="mb-2" />
+                      <span className="text-xs font-bold uppercase tracking-widest">Clique ou Arraste a imagem</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-[11px] font-bold uppercase italic ml-2" style={{ color: configCores?.primaria }}>Nome do Item</label>
                 <input required value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-sm font-bold uppercase" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda, color: configCores?.texto }} />
@@ -440,16 +489,6 @@ export default function AdminProdutos() {
                     <option key={cat.id} value={cat.nome}>{cat.nome}</option>
                   ))}
                 </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold uppercase italic ml-2" style={{ color: configCores?.primaria }}>Link da Foto (URL)</label>
-                <input value={form.foto} onChange={e => setForm({...form, foto: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-xs" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda, color: configCores?.texto }} placeholder="https://..." />
-                {form.foto && (
-                  <div className="mt-2 h-24 w-24 rounded-xl overflow-hidden border border-dashed">
-                    <img src={form.foto} alt="Preview" className="w-full h-full object-cover" />
-                  </div>
-                )}
               </div>
 
               <button type="submit" disabled={carregando} className="w-full font-black py-5 rounded-2xl uppercase tracking-widest text-white shadow-lg transition-all active:scale-95"

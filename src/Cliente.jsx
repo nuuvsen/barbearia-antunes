@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, deleteDoc, limit, setDoc } from 'firebase/firestore'
+import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, limit, setDoc } from 'firebase/firestore'
 import { Info } from 'lucide-react'
 
 const MAPA_DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
@@ -61,8 +61,15 @@ export default function Cliente({ servicos }) {
           4: { ativo: true, t1Ini: '09:00', t1Fim: '12:00', t2Ini: '13:00', t2Fim: '19:00' },
           5: { ativo: true, t1Ini: '09:00', t1Fim: '12:00', t2Ini: '13:00', t2Fim: '20:00' },
           6: { ativo: true, t1Ini: '09:00', t1Fim: '12:00', t2Ini: '13:00', t2Fim: '18:00' }
-        }
+        },
+        excecoes: {},
+        regrasSemanas: []
       }
+      
+      // Previne quebra caso banco antigo não tenha as chaves novas
+      if (!cfg.excecoes) cfg.excecoes = {}
+      if (!cfg.regrasSemanas) cfg.regrasSemanas = []
+      
       setConfigAgenda(cfg)
 
       const ano = new Date().getFullYear()
@@ -113,18 +120,34 @@ export default function Cliente({ servicos }) {
     const hoje = new Date();
     hoje.setHours(0,0,0,0);
     if (dataObj < hoje) return false;
+    
     let limiteFuturo = new Date();
     limiteFuturo.setMonth(limiteFuturo.getMonth() + 13);
     if (dataObj > limiteFuturo) return false;
+    
     const ano = dataObj.getFullYear();
     const mes = String(dataObj.getMonth() + 1).padStart(2, '0');
     const dia = String(dataObj.getDate()).padStart(2, '0');
     const formatoAPI = `${ano}-${mes}-${dia}`;
     const diaNum = dataObj.getDay();
     const diaSigla = MAPA_DIAS[diaNum];
-    const barbeariaAberta = configAgenda.horariosPorDia[diaNum]?.ativo;
+    
+    // 1. Número da semana no mês
+    const ocorrenciaSemana = Math.ceil(dataObj.getDate() / 7);
+
+    // 2. Regra Dinâmica da Semana (se houver)
+    const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
+        r.diaSemana === diaNum && r.semanas.includes(ocorrenciaSemana)
+    );
+
+    // 3. Hierarquia (Exceção Exata > Regra Semana > Regra Padrão)
+    const regraDoDia = configAgenda.excecoes?.[formatoAPI] || regraSemanaDinamica || configAgenda.horariosPorDia[diaNum];
+    const barbeariaAberta = regraDoDia?.ativo;
+    
     const eFeriado = configAgenda.feriadosAtivos && feriados.some(f => f.date === formatoAPI);
+    
     if (!barbeariaAberta || eFeriado) return false;
+    
     if (escolha.barbeiro.id === 'qualquer') {
       return barbeiros.some(b => b.diasTrabalho?.[diaSigla] !== false);
     } else {
@@ -137,7 +160,18 @@ export default function Cliente({ servicos }) {
     setEtapa(4)
     const diaSemana = dia.dataReal.getDay()
     const diaSigla = MAPA_DIAS[diaSemana] 
-    const regraDoDia = configAgenda.horariosPorDia[diaSemana]
+    
+    // 1. Número da semana no mês
+    const ocorrenciaSemana = Math.ceil(dia.dataReal.getDate() / 7);
+
+    // 2. Regra Dinâmica da Semana (se houver)
+    const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
+        r.diaSemana === diaSemana && r.semanas.includes(ocorrenciaSemana)
+    );
+
+    // 3. Hierarquia (Exceção Exata > Regra Semana > Regra Padrão)
+    const regraDoDia = configAgenda.excecoes?.[dia.formatoAPI] || regraSemanaDinamica || configAgenda.horariosPorDia[diaSemana];
+    
     let ocupados = []
 
     if (escolha.barbeiro.id === 'qualquer') {
@@ -167,6 +201,7 @@ export default function Cliente({ servicos }) {
     setHorariosOcupados(ocupados)
 
     const gerarSlots = (inicio, fim, intervalo) => {
+      if (!inicio || !fim) return [];
       let slots = []
       let [h, m] = inicio.split(':').map(Number)
       let fimMin = fim.split(':').map(Number)
@@ -286,7 +321,6 @@ export default function Cliente({ servicos }) {
     }
 
     try {
-      // --- LÓGICA PARA GARANTIR QUE O CLIENTE ESTEJA NA COLEÇÃO "clientes" ---
       const clienteRef = doc(db, "clientes", contato.telefone);
       const clienteSnap = await getDoc(clienteRef);
 
@@ -301,11 +335,9 @@ export default function Cliente({ servicos }) {
           dataCadastro: new Date().toISOString()
         });
       } else {
-        // Se já existe, apenas incrementa as visitas (opcional)
         const totalAtual = clienteSnap.data().totalVisitas || 0;
         await updateDoc(clienteRef, { totalVisitas: totalAtual + 1 });
       }
-      // -----------------------------------------------------------------------
 
       await addDoc(collection(db, "agendamentos"), {
         servico: escolha.servico.nome,

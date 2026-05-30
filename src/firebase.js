@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth"; // <-- 1. Importamos a ferramenta de Auth
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDvHAf6GShqzUFTbopXXlN39uMzL0leLIY",
@@ -20,3 +21,5 @@ export const db = getFirestore(app);
 
 // Inicializa a Autenticação e "exporta" ela (ISSO RESOLVE A TELA BRANCA)
 export const auth = getAuth(app);
+
+export const storage = getStorage(app);
