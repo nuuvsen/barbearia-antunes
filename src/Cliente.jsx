@@ -354,6 +354,32 @@ export default function Cliente({ servicos }) {
       if (estaInclusoNoPlano && perfil.cortesRestantes > 0) {
         await updateDoc(doc(db, "clientes", perfil.telefone), { cortesRestantes: perfil.cortesRestantes - 1 })
       }
+
+      // ==========================================================
+      // 🟢 INÍCIO: AVISAR O BOT PARA ENVIAR O "EFEITO UAU"
+      // ==========================================================
+      try {
+        await fetch('http://localhost:3001/api/bot/enviar-confirmacao', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            telefone: contato.telefone,
+            nomeCliente: contato.nome,
+            servico: escolha.servico.nome,
+            data: formatarDataAmigavel(escolha.data), // Já formata para ficar bonito ex: 15/06
+            horario: escolha.hora,
+            barbeiro: barbeiroFinalNome
+          })
+        });
+      } catch (errorBot) {
+        console.error("Erro ao acionar o bot, mas o agendamento foi salvo:", errorBot);
+      }
+      // ==========================================================
+      // 🔴 FIM: AVISAR O BOT
+      // ==========================================================
+
       setSucesso(true)
     } catch (erro) { 
       console.error(erro);

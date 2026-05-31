@@ -3,10 +3,11 @@ import { db } from './firebase'
 import { collection, getDocs, doc, setDoc, getDoc } from 'firebase/firestore'
 import { 
   Percent, Clock, Save, User, Calendar, 
-  AlertCircle, Headphones, Palette, Loader2, ChevronDown, Plus, Trash2, CalendarRange 
+  AlertCircle, Headphones, Palette, Loader2, ChevronDown, Plus, Trash2, CalendarRange, Bot 
 } from 'lucide-react'
 import AdminSuporte from './AdminSuporte'
-import Personalizacao from './Personalizacao' 
+import Personalizacao from './Personalizacao'
+import GerenciadorBot from './GerenciadorBot' 
 
 const DIAS_NOME = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
 
@@ -187,7 +188,7 @@ export default function AdminConfiguracoes() {
           </p>
         </div>
         
-        {secao !== 'suporte' && secao !== 'personalizacao' && (
+        {secao !== 'suporte' && secao !== 'personalizacao' && secao !== 'bot' && (
           <button onClick={salvando ? null : salvarConfiguracoes} disabled={salvando}
             className="hover:scale-105 active:scale-95 px-8 py-4 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-3 transition-all shadow-lg"
             style={{ backgroundColor: cores.primaria, color: '#ffffff' }}>
@@ -197,8 +198,13 @@ export default function AdminConfiguracoes() {
       </div>
 
       <div className="flex flex-wrap gap-2 mb-8 p-1.5 rounded-2xl border" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
-        {[{ id: 'comissoes', label: 'Comissões', icon: Percent }, { id: 'escala', label: 'Escala & Horários', icon: Clock },
-          { id: 'personalizacao', label: 'Personalização', icon: Palette }, { id: 'suporte', label: 'Suporte', icon: Headphones }].map((item) => (
+        {[
+          { id: 'comissoes', label: 'Comissões', icon: Percent }, 
+          { id: 'escala', label: 'Escala & Horários', icon: Clock },
+          { id: 'personalizacao', label: 'Personalização', icon: Palette }, 
+          { id: 'bot', label: 'Bot WhatsApp', icon: Bot },
+          { id: 'suporte', label: 'Suporte', icon: Headphones }
+        ].map((item) => (
           <button key={item.id} onClick={() => setSecao(item.id)}
             className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-black uppercase text-[9px] tracking-widest transition-all"
             style={{ backgroundColor: secao === item.id ? cores.primaria : 'transparent', color: secao === item.id ? '#ffffff' : cores.textoSecundario }}>
@@ -210,7 +216,7 @@ export default function AdminConfiguracoes() {
       {secao === 'escala' && (
         <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
           
-          {/* INTERVALO E FERIADOS... (IGUAL ANTES) */}
+          {/* INTERVALO E FERIADOS */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="p-8 rounded-[2rem] border shadow-sm" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
               <label className="block text-[10px] font-black uppercase tracking-widest mb-4" style={{ color: cores.textoSecundario }}>Intervalo entre Cortes</label>
@@ -233,7 +239,7 @@ export default function AdminConfiguracoes() {
             </div>
           </div>
 
-          {/* TURNOS PADRÃO (IGUAL ANTES) */}
+          {/* TURNOS PADRÃO */}
           <div className="space-y-3">
             <h3 className="text-[10px] font-black uppercase tracking-widest ml-2 mb-4 flex items-center gap-2" style={{ color: cores.textoSecundario }}>
               <Calendar size={14} style={{ color: cores.primaria }} /> Turnos Padrão (Fixos)
@@ -264,7 +270,7 @@ export default function AdminConfiguracoes() {
             })}
           </div>
 
-          {/* NOVA SEÇÃO: REGRAS POR SEMANA (DINÂMICAS) */}
+          {/* REGRAS POR SEMANA (DINÂMICAS) */}
           <div className="mt-12 pt-8 border-t border-dashed" style={{ borderColor: cores.borda }}>
             <h3 className="text-sm font-black uppercase tracking-widest ml-2 mb-2 flex items-center gap-2" style={{ color: cores.textoPrincipal }}>
               <CalendarRange size={18} style={{ color: cores.primaria }} /> Regras Dinâmicas por Semana do Mês
@@ -412,7 +418,9 @@ export default function AdminConfiguracoes() {
           ))}
         </div>
       )}
+      
       {secao === 'personalizacao' && <Personalizacao />}
+      {secao === 'bot' && <GerenciadorBot />}
       {secao === 'suporte' && <AdminSuporte />}
     </div>
   )

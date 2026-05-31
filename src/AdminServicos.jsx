@@ -11,11 +11,64 @@ export default function AdminServicos({ servicos, aoMudar }) {
   useEffect(() => {
     const unsubCores = onSnapshot(doc(db, "configuracoes", "personalizacao"), (docSnap) => {
       if (docSnap.exists()) {
-        setConfigCores(docSnap.data().cores); // Acessa o objeto 'cores' visto no seu Firestore
+        setConfigCores(docSnap.data().cores);
       }
     });
     return () => unsubCores();
   }, []);
+
+  // --- FUNÇÕES DE MÁSCARA ---
+  const handlePrecoChange = (e) => {
+    // Remove tudo que não for número
+    let valor = e.target.value.replace(/\D/g, "");
+    if (!valor) {
+      setForm({ ...form, preco: "" });
+      return;
+    }
+    // Divide por 100 para criar os centavos e formata no padrão brasileiro
+    const formatoMoeda = (Number(valor) / 100).toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    setForm({ ...form, preco: `R$ ${formatoMoeda}` });
+  };
+
+  const handleTempoChange = (e) => {
+    const valorOriginal = e.target.value;
+
+    // Se o valor já tiver "h", permitimos que o usuário edite ou apague livremente.
+    // Isso evita o bug de transformar "1h 30" em "130 minutos" ao apagar uma letra.
+    if (valorOriginal.includes("h")) {
+      setForm({ ...form, tempo: valorOriginal });
+      return;
+    }
+
+    // Remove tudo que não for número
+    const apenasNumeros = valorOriginal.replace(/\D/g, "");
+
+    // Se não houver números (campo vazio), limpa o input
+    if (!apenasNumeros) {
+      setForm({ ...form, tempo: "" });
+      return;
+    }
+
+    const minutosTotais = parseInt(apenasNumeros, 10);
+
+    // Converte para horas se passar ou igualar a 60
+    if (minutosTotais >= 60) {
+      const horas = Math.floor(minutosTotais / 60);
+      const minutosRestantes = minutosTotais % 60;
+
+      if (minutosRestantes > 0) {
+        setForm({ ...form, tempo: `${horas}h ${minutosRestantes}min` });
+      } else {
+        setForm({ ...form, tempo: `${horas}h` });
+      }
+    } else {
+      setForm({ ...form, tempo: `${minutosTotais} min` });
+    }
+  };
+  // --------------------------
 
   const salvarServico = async (e) => {
     e.preventDefault()
@@ -30,8 +83,8 @@ export default function AdminServicos({ servicos, aoMudar }) {
       } else {
         await addDoc(collection(db, "servicos"), { 
           nome: form.nome, 
-          preco: form.preco, 
-          tempo: form.tempo || "30min" 
+          preco: form.preco || "R$ 0,00", // Fallback padronizado
+          tempo: form.tempo || "30 min"   // Fallback padronizado
         })
       }
       setForm({ id: null, nome: '', preco: '', tempo: '' })
@@ -146,9 +199,9 @@ export default function AdminServicos({ servicos, aoMudar }) {
                 <input 
                   required
                   value={form.preco} 
-                  onChange={e => setForm({...form, preco: e.target.value})} 
+                  onChange={handlePrecoChange} 
                   placeholder="R$ 0,00" 
-                  className="w-full border p-4 rounded-2xl outline-none"
+                  className="w-full border p-4 rounded-2xl outline-none transition-all focus:ring-2"
                   style={{ 
                     backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', 
                     borderColor: configCores?.borda || 'var(--cor-borda)', 
@@ -163,9 +216,9 @@ export default function AdminServicos({ servicos, aoMudar }) {
                 </label>
                 <input 
                   value={form.tempo} 
-                  onChange={e => setForm({...form, tempo: e.target.value})} 
-                  placeholder="30min" 
-                  className="w-full border p-4 rounded-2xl outline-none"
+                  onChange={handleTempoChange} 
+                  placeholder="30 min" 
+                  className="w-full border p-4 rounded-2xl outline-none transition-all focus:ring-2"
                   style={{ 
                     backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', 
                     borderColor: configCores?.borda || 'var(--cor-borda)', 

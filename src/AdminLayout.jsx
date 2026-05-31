@@ -36,6 +36,7 @@ export default function AdminLayout({ children }) {
             <SidebarItem icon={<Users size={20}/>} label="Clientes" />
             <SidebarItem icon={<Scissors size={20}/>} label="Serviços" />
             <SidebarItem icon={<Settings size={20}/>} label="Configurações" />
+            <SidebarItem icon={<Bot size={20}/>} label="Suporte e Bot" active={false} />
           </nav>
 
           <button className="flex items-center gap-3 p-4 text-gray-500 hover:text-red-500 transition-all font-bold uppercase text-xs">

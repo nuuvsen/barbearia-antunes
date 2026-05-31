@@ -22,7 +22,7 @@ export default function AdminSuporte() {
       })
       setEnviado(true)
       setMensagem('')
-      setTimeout(() => setEnviado(false), 5000) // Reseta o status após 5 segundos
+      setTimeout(() => setEnviado(false), 5000)
     } catch (error) {
       alert("Erro ao enviar mensagem. Tente novamente.")
     } finally {
@@ -31,8 +31,9 @@ export default function AdminSuporte() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <div className="bg-[#111] border border-[#1f1f1f] rounded-[2.5rem] p-10 shadow-2xl">
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="bg-[#111] border border-[#1f1f1f] rounded-[2.5rem] p-10 shadow-2xl animate-in fade-in duration-300">
+        
         <div className="flex items-center gap-4 mb-8">
           <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
             <MessageSquare className="text-white" size={28} />
@@ -46,7 +47,7 @@ export default function AdminSuporte() {
         {enviado ? (
           <div className="bg-green-600/10 border border-green-600/30 p-10 rounded-3xl text-center animate-in zoom-in duration-300">
             <div className="flex justify-center mb-4">
-               <CheckCircle className="text-green-500" size={48} />
+              <CheckCircle className="text-green-500" size={48} />
             </div>
             <h3 className="text-white font-black uppercase tracking-widest mb-2">Mensagem Enviada!</h3>
             <p className="text-green-500/70 text-xs font-bold uppercase">Recebemos sua solicitação. Responderemos em breve.</p>
@@ -72,16 +73,6 @@ export default function AdminSuporte() {
             </button>
           </form>
         )}
-
-        <div className="mt-10 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-           <p className="text-[9px] text-gray-600 uppercase font-bold tracking-widest text-center md:text-left">
-             Horário de Atendimento: <span className="text-gray-400">Seg a Sex, 09h às 18h</span>
-           </p>
-           <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-[9px] text-green-500 uppercase font-black tracking-widest">Sistema Operacional</span>
-           </div>
-        </div>
       </div>
     </div>
   )

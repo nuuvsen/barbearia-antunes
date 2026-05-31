@@ -58,7 +58,27 @@ export default function AdminDashboard({ totalServicos }) {
 
   const concluirAtendimentoFinal = async (id) => {
     try {
+      // 1. Salva a conclusão no banco de dados
       await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
+      
+      // 2. Aciona o Bot para enviar o NPS em 30 minutos
+      if (agendamentoEmPagamento) {
+        try {
+          await fetch('http://localhost:3001/api/bot/nps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              telefone: agendamentoEmPagamento.clienteTelefone,
+              nomeCliente: agendamentoEmPagamento.clienteNome,
+              barbeiro: agendamentoEmPagamento.barbeiro || "Equipe"
+            })
+          });
+        } catch (errorBot) {
+          console.error("Erro ao acionar o bot de NPS:", errorBot);
+        }
+      }
+
+      // 3. Limpa o estado da tela
       setAgendamentoEmPagamento(null);
     } catch (error) {
       console.error("Erro ao concluir:", error);
