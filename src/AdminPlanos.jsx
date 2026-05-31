@@ -25,6 +25,7 @@ export default function AdminPlanos() {
     nome: '', 
     valor: '', 
     cortes: '', 
+    validadeDias: '',
     status: 'Ativo', 
     servicosInclusos: [], 
     combos: [] 
@@ -68,6 +69,7 @@ export default function AdminPlanos() {
       nome: form.nome,
       valor: form.valor,
       cortes: form.cortes,
+      validadeDias: Number(form.validadeDias) || 0, // <--- SALVA NO BANCO
       status: form.status,
       servicosInclusos: form.servicosInclusos,
       combos: form.combos 
@@ -79,7 +81,7 @@ export default function AdminPlanos() {
       await addDoc(collection(db, "planos"), dadosPlanos)
     }
 
-    setForm({ id: null, nome: '', valor: '', cortes: '', status: 'Ativo', servicosInclusos: [], combos: [] })
+    setForm({ id: null, nome: '', valor: '', cortes: '', validadeDias: '', status: 'Ativo', servicosInclusos: [], combos: [] })
     carregarDados()
   }
 
@@ -106,7 +108,7 @@ export default function AdminPlanos() {
 
   const removerCombo = (index) => {
     const novaLista = form.combos.filter((_, i) => i !== index)
-    setForm({ ...form, combos: novaLista })
+      setForm({ ...form, combos: novaLista })
   }
 
   const hexToRgba = (hex, alpha) => {
@@ -163,7 +165,8 @@ export default function AdminPlanos() {
                   className="text-xs mt-2 italic border-b pb-2" 
                   style={{ color: cores.textoSecundario, borderColor: hexToRgba(cores.borda, 0.1) }}
                 >
-                  Limite de {p.cortes} agendamentos
+                  Limite de {p.cortes} agendamentos 
+                  {p.validadeDias ? ` (${p.validadeDias} dias de validade)` : ''}
                 </p>
                 
                 <div className="mt-2 flex flex-wrap gap-1">
@@ -222,19 +225,28 @@ export default function AdminPlanos() {
               }} 
             />
             
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <input 
                 value={form.valor} 
                 onChange={e => setForm({...form, valor: e.target.value})} 
                 placeholder="Valor" 
-                className="w-full border p-4 rounded-2xl outline-none"
+                className="w-full border p-4 rounded-2xl outline-none" 
                 style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
               />
               <input 
                 value={form.cortes} 
                 onChange={e => setForm({...form, cortes: e.target.value})} 
                 placeholder="Qtd Cortes" 
-                className="w-full border p-4 rounded-2xl outline-none"
+                type="number"
+                className="w-full border p-4 rounded-2xl outline-none" 
+                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
+              />
+              <input 
+                value={form.validadeDias} 
+                onChange={e => setForm({...form, validadeDias: e.target.value})} 
+                placeholder="Validade (Dias)" 
+                type="number"
+                className="w-full border p-4 rounded-2xl outline-none" 
                 style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
               />
             </div>
@@ -316,7 +328,7 @@ export default function AdminPlanos() {
             {form.id && (
               <button 
                 type="button" 
-                onClick={() => setForm({id:null, nome:'', valor:'', cortes:'', status:'Ativo', servicosInclusos: [], combos: []})} 
+                onClick={() => setForm({id:null, nome:'', valor:'', cortes:'', validadeDias: '', status:'Ativo', servicosInclusos: [], combos: []})} 
                 className="w-full text-xs font-bold mt-2 hover:opacity-70 transition-colors"
                 style={{ color: cores.textoSecundario }}
               >

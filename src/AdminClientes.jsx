@@ -12,7 +12,7 @@ export default function AdminClientes() {
   
   // ESTADOS DO MODAL DE EDIÇÃO/CRIAÇÃO
   const [modalAberto, setModalAberto] = useState(false)
-  const [form, setForm] = useState({ telefoneAntigo: null, nome: '', telefone: '', planoId: '', cortesRestantes: 0 })
+  const [form, setForm] = useState({ telefoneAntigo: null, nome: '', telefone: '', planoId: '', cortesRestantes: 0, dataLimite: '' })
 
   // ESTADOS DO MODAL DE HISTÓRICO
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false)
@@ -58,7 +58,8 @@ export default function AdminClientes() {
         primeiraVisita: statsAgendamentos[tel]?.primeiraVisita || null,
         planoId: mapaClientes[tel].planoId || '',
         planoNome: mapaClientes[tel].planoNome || '',
-        cortesRestantes: mapaClientes[tel].cortesRestantes || 0
+        cortesRestantes: mapaClientes[tel].cortesRestantes || 0,
+        dataLimite: mapaClientes[tel].dataLimite || '' // <--- Garante que a data seja carregada
       })
     }
 
@@ -73,7 +74,8 @@ export default function AdminClientes() {
             primeiraVisita: statsAgendamentos[tel].primeiraVisita,
             planoId: '',
             planoNome: '',
-            cortesRestantes: 0
+            cortesRestantes: 0,
+            dataLimite: ''
           })
         }
       }
@@ -110,7 +112,7 @@ export default function AdminClientes() {
   }
 
   const abrirModalNovo = () => {
-    setForm({ telefoneAntigo: null, nome: '', telefone: '', planoId: '', cortesRestantes: 0 })
+    setForm({ telefoneAntigo: null, nome: '', telefone: '', planoId: '', cortesRestantes: 0, dataLimite: '' })
     setModalAberto(true)
   }
 
@@ -120,7 +122,8 @@ export default function AdminClientes() {
       nome: cliente.nome,
       telefone: cliente.telefone,
       planoId: cliente.planoId || '',
-      cortesRestantes: cliente.cortesRestantes || 0
+      cortesRestantes: cliente.cortesRestantes || 0,
+      dataLimite: cliente.dataLimite || ''
     })
     setModalAberto(true)
   }
@@ -158,7 +161,8 @@ export default function AdminClientes() {
         telefone: form.telefone,
         planoId: form.planoId,
         planoNome: planoNome,
-        cortesRestantes: form.cortesRestantes
+        cortesRestantes: form.cortesRestantes,
+        dataLimite: form.dataLimite || null
       }, { merge: true })
 
       if (form.telefoneAntigo && form.telefone !== form.telefoneAntigo) {
@@ -181,11 +185,25 @@ export default function AdminClientes() {
   const aoMudarPlano = (e) => {
     const idEscolhido = e.target.value
     if (!idEscolhido) {
-      setForm({ ...form, planoId: '', cortesRestantes: 0 })
+      setForm({ ...form, planoId: '', cortesRestantes: 0, dataLimite: '' })
       return
     }
     const planoEncontrado = planos.find(p => p.id === idEscolhido)
-    setForm({ ...form, planoId: idEscolhido, cortesRestantes: Number(planoEncontrado.cortes) })
+    
+    // --- LÓGICA DE DATA AUTOMÁTICA ---
+    let novaDataLimite = ''
+    if (planoEncontrado.validadeDias && Number(planoEncontrado.validadeDias) > 0) {
+      const dataAtual = new Date();
+      dataAtual.setDate(dataAtual.getDate() + Number(planoEncontrado.validadeDias));
+      novaDataLimite = dataAtual.toISOString().split('T')[0];
+    }
+
+    setForm({ 
+      ...form, 
+      planoId: idEscolhido, 
+      cortesRestantes: Number(planoEncontrado.cortes),
+      dataLimite: novaDataLimite 
+    })
   }
 
   const debitarCorte = async (cliente) => {
@@ -349,6 +367,21 @@ export default function AdminClientes() {
                   <div className="mt-4 flex items-center justify-between bg-[var(--cor-card)] p-3 rounded-xl border border-[var(--cor-borda)]">
                     <label className="text-xs text-[var(--cor-primaria)] uppercase font-black">Créditos:</label>
                     <input type="number" value={form.cortesRestantes} onChange={e => setForm({...form, cortesRestantes: Number(e.target.value)})} className="w-16 bg-transparent text-right font-black text-[var(--cor-texto-principal)] outline-none text-xl" />
+                  </div>
+                )}
+
+                {/* MOSTRA O CAMPO DE DATA APENAS SE TIVER PLANO SELECIONADO */}
+                {form.planoId && (
+                  <div className="flex flex-col gap-2 mt-4">
+                    <label className="text-[10px] uppercase font-black tracking-widest text-[var(--cor-texto-secundario)]">
+                      Data Limite do Plano:
+                    </label>
+                    <input 
+                      type="date" 
+                      value={form.dataLimite} 
+                      onChange={e => setForm({...form, dataLimite: e.target.value})} 
+                      className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-4 rounded-xl outline-none text-[var(--cor-texto-principal)] focus:border-[var(--cor-primaria)] transition-all font-bold"
+                    />
                   </div>
                 )}
               </div>
