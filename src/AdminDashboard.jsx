@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, onSnapshot, query, doc, updateDoc, where, getDocs, getDoc } from 'firebase/firestore' 
-import { Search, X, Plus, Clock, CalendarDays, DollarSign, Receipt, TrendingUp, TrendingDown } from 'lucide-react'
+import { collection, onSnapshot, query, doc, updateDoc, where, getDocs, getDoc, increment } from 'firebase/firestore'; 
+import { Search, X, Plus, Clock, CalendarDays } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AdminPagamento from './AdminPagamento'
 import Comanda from './Comanda'
@@ -10,34 +10,52 @@ const IconCheck = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" heigh
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
 
 export default function AdminDashboard({ totalServicos }) {
-  // ESTADOS ORIGINAIS
   const [agendamentos, setAgendamentos] = useState([])
   const [mostrarFinalizados, setMostrarFinalizados] = useState(false)
   const [agendamentoEmPagamento, setAgendamentoEmPagamento] = useState(null)
   const [busca, setBusca] = useState('')
+  const [abaHistorico, setAbaHistorico] = useState('agendamento') 
   const [configCores, setConfigCores] = useState(null)
   const [configAgenda, setConfigAgenda] = useState(null) 
   const [barbeiros, setBarbeiros] = useState([])
   const [mostrarComanda, setMostrarComanda] = useState(false)
   const [dataSelecionada, setDataSelecionada] = useState(new Date())
 
-  // NOVOS ESTADOS - VISÃO GERAL DO MÊS
-  const [faturamento, setFaturamento] = useState(0);
-  const [ticketMedio, setTicketMedio] = useState(0);
-  const [lucroReal, setLucroReal] = useState(0); 
-  const [totalDespesas, setTotalDespesas] = useState(0); 
-  const [servicosRanking, setServicosRanking] = useState([]);
-  const [carregandoMetricas, setCarregandoMetricas] = useState(true);
-
-  // 1. CARREGAR AGENDAMENTOS
+  // 1. CARREGAR AGENDAMENTOS E COMANDAS (UNIFICADOS)
   useEffect(() => {
-    const q = query(collection(db, "agendamentos"))
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const ags = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-      setAgendamentos(ags)
-    })
-    return () => unsubscribe()
-  }, [])
+    const qAgendamentos = query(collection(db, "agendamentos"));
+    const qComandas = query(collection(db, "comandas"));
+
+    const unsubAgendamentos = onSnapshot(qAgendamentos, (snapAg) => {
+      const listaAgendamentos = snapAg.docs.map(doc => ({ 
+        id: doc.id, 
+        tipo: 'agendamento', 
+        ...doc.data() 
+      }));
+
+      const unsubComandas = onSnapshot(qComandas, (snapCom) => {
+        const listaComandas = snapCom.docs.map(doc => ({ 
+          id: doc.id, 
+          tipo: 'comanda', 
+          ...doc.data() 
+        }));
+
+        const tudoJunto = [...listaAgendamentos, ...listaComandas];
+        
+        tudoJunto.sort((a, b) => {
+          const horaA = a.hora || '00:00';
+          const horaB = b.hora || '00:00';
+          return horaA.localeCompare(horaB);
+        });
+        
+        setAgendamentos(tudoJunto);
+      });
+
+      return () => unsubComandas();
+    });
+
+    return () => unsubAgendamentos();
+  }, []);
 
   // 2. BUSCA CORES
   useEffect(() => {
@@ -74,78 +92,6 @@ export default function AdminDashboard({ totalServicos }) {
   }, []);
 
   // =========================================================================
-  // 5. BUSCA DADOS DE FATURAMENTO E DESPESAS DO MÊS ATUAL
-  // =========================================================================
-  useEffect(() => {
-    const buscarDadosDoMes = async () => {
-      try {
-        const dataAtual = new Date();
-        const mesAtual = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
-
-        // 1. Busca TODAS as comandas do mês
-        const qComandas = query(collection(db, "comandas"), where("mesReferencia", "==", mesAtual));
-        const snapshotComandas = await getDocs(qComandas);
-        
-        const comandas = [];
-        let somaLucroBarbearia = 0; 
-
-        snapshotComandas.forEach((doc) => {
-          const dados = doc.data();
-          comandas.push(dados);
-          somaLucroBarbearia += Number(dados.lucroBarbearia || 0); 
-        });
-
-        // 2. Busca TODAS as despesas do mês
-        const qDespesas = query(collection(db, "despesas"), where("mesReferencia", "==", mesAtual));
-        const snapshotDespesas = await getDocs(qDespesas);
-        
-        let somaDespesas = 0;
-        snapshotDespesas.forEach((doc) => {
-          somaDespesas += Number(doc.data().valor || 0);
-        });
-
-        setTotalDespesas(somaDespesas);
-        setLucroReal(somaLucroBarbearia - somaDespesas); 
-
-        calcularMetricas(comandas);
-      } catch (error) {
-        console.error("Erro ao buscar dados do dashboard:", error);
-      } finally {
-        setCarregandoMetricas(false);
-      }
-    };
-
-    buscarDadosDoMes();
-  }, [agendamentos]);
-
-  const calcularMetricas = (comandas) => {
-    // 1. Faturamento e Ticket Médio
-    const totalFaturado = comandas.reduce((acumulador, comanda) => acumulador + (comanda.valorTotal || 0), 0);
-    const totalComandas = comandas.length;
-    const ticket = totalComandas > 0 ? (totalFaturado / totalComandas) : 0;
-
-    setFaturamento(totalFaturado);
-    setTicketMedio(ticket);
-
-    // 2. Serviços Mais Procurados (Ranking)
-    const contagemServicos = {};
-    
-    comandas.forEach(comanda => {
-      if (comanda.servicos && Array.isArray(comanda.servicos)) {
-        comanda.servicos.forEach(servico => {
-          contagemServicos[servico] = (contagemServicos[servico] || 0) + 1;
-        });
-      }
-    });
-
-    const ranking = Object.entries(contagemServicos)
-      .map(([nome, quantidade]) => ({ nome, quantidade }))
-      .sort((a, b) => b.quantidade - a.quantidade);
-
-    setServicosRanking(ranking);
-  };
-
-  // =========================================================================
   // FUNÇÕES DE AÇÃO 
   // =========================================================================
   const concluirAtendimentoFinal = async (id) => {
@@ -155,18 +101,32 @@ export default function AdminDashboard({ totalServicos }) {
         return;
       }
 
-      // 1. Verifica de onde veio o pagamento
       if (agendamentoEmPagamento?.origem === 'comanda') {
-        // Se veio direto da Nova Comanda, atualiza na coleção de comandas
         await updateDoc(doc(db, "comandas", id), { status: "Concluído" });
+
+        if (agendamentoEmPagamento.produtos && agendamentoEmPagamento.produtos.length > 0) {
+          for (const prod of agendamentoEmPagamento.produtos) {
+            const nomeProduto = typeof prod === 'string' ? prod : prod.nome;
+            
+            if (nomeProduto && nomeProduto !== 'Nenhum' && nomeProduto !== '') {
+              const qProd = query(collection(db, "produtos"), where("nome", "==", nomeProduto.trim()));
+              const snapProd = await getDocs(qProd);
+              
+              if (!snapProd.empty) {
+                const produtoRef = snapProd.docs[0].ref;
+                await updateDoc(produtoRef, {
+                  quantidadeAtual: increment(-1)
+                });
+              }
+            }
+          }
+        }
       } else {
-        // Se veio da Fila de Agendamentos, atualiza na coleção de agendamentos
         await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
       }
       
-      toast.success("Atendimento concluído com sucesso!"); 
+      toast.success("Atendimento concluído e financeiro/estoque atualizados!"); 
       
-      // 2. Aciona o Bot para enviar o NPS em 30 minutos
       if (agendamentoEmPagamento) {
         try {
           await fetch('http://localhost:3001/api/bot/nps', {
@@ -180,11 +140,9 @@ export default function AdminDashboard({ totalServicos }) {
           });
         } catch (errorBot) {
           console.error("Erro ao acionar o bot de NPS:", errorBot);
-          toast("Atendimento salvo, mas o envio de NPS falhou.", { icon: '⚠️' }); 
         }
       }
 
-      // 3. Limpa o estado e fecha a tela de pagamento
       setAgendamentoEmPagamento(null);
     } catch (error) {
       console.error("Erro ao concluir:", error);
@@ -204,7 +162,10 @@ export default function AdminDashboard({ totalServicos }) {
     }
   }
 
-  const formatarWhatsApp = (numero) => `https://wa.me/55${numero.replace(/\D/g, '')}`
+  const formatarWhatsApp = (numero) => {
+  if (!numero) return '#';
+  return `https://wa.me/55${String(numero).replace(/\D/g, '')}`;
+}
 
   const getFormatosData = (dataBase) => {
     const ano = dataBase.getFullYear();
@@ -274,6 +235,7 @@ export default function AdminDashboard({ totalServicos }) {
 
   const atendimentosFinalizados = agendamentos
     .filter(ag => ag.status === 'Concluído')
+    .filter(ag => ag.tipo === abaHistorico)
     .filter(ag => 
       ag.clienteNome?.toLowerCase().includes(busca.toLowerCase()) || 
       ag.servico?.toLowerCase().includes(busca.toLowerCase())
@@ -340,84 +302,12 @@ export default function AdminDashboard({ totalServicos }) {
         </div>
       </div>
 
-      {/* ========================================================= */}
-      {/* NOVA SEÇÃO: VISÃO GERAL DO MÊS */}
-      {/* ========================================================= */}
-      <div className="mb-10">
-        <h2 className="text-xl font-bold uppercase tracking-widest flex items-center gap-2 mb-4" 
-            style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
-          <TrendingUp size={20} /> Visão Geral do Mês
-        </h2>
-
-        {carregandoMetricas ? (
-          <p className="text-sm font-bold opacity-50" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>Calculando métricas...</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            
-            <div className="p-6 rounded-2xl border flex flex-col justify-between" 
-                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
-              <div className="flex justify-between items-start mb-2">
-                <p className="text-[10px] uppercase font-black opacity-50" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Faturamento Bruto</p>
-                <DollarSign size={18} className="text-blue-500" />
-              </div>
-              <h2 className="text-3xl font-black text-blue-500 truncate">
-                R$ {faturamento.toFixed(2).replace('.', ',')}
-              </h2>
-            </div>
-
-            <div className="p-6 rounded-2xl border flex flex-col justify-between" 
-                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
-              <div className="flex justify-between items-start mb-2">
-                <p className="text-[10px] uppercase font-black opacity-50" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Despesas no Mês</p>
-                <TrendingDown size={18} className="text-red-500" />
-              </div>
-              <h2 className="text-3xl font-black text-red-500 truncate">
-                R$ {totalDespesas.toFixed(2).replace('.', ',')}
-              </h2>
-            </div>
-
-            <div className="p-6 rounded-2xl border flex flex-col justify-between relative overflow-hidden" 
-                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
-              <div className="flex justify-between items-start mb-2 z-10">
-                <p className="text-[10px] uppercase font-black opacity-50" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Lucro Líquido Real</p>
-                <Receipt size={18} className="text-green-500" />
-              </div>
-              <h2 className="text-3xl font-black text-green-500 truncate z-10">
-                R$ {lucroReal.toFixed(2).replace('.', ',')}
-              </h2>
-              {/* Avisinho se o lucro estiver negativo */}
-              {lucroReal < 0 && <span className="absolute bottom-2 right-4 text-[8px] font-black text-red-500 uppercase z-10">Prejuízo</span>}
-            </div>
-
-            <div className="p-5 rounded-2xl border overflow-hidden flex flex-col" 
-                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
-              <p className="text-[10px] uppercase font-black opacity-50 mb-3" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Top Serviços do Mês</p>
-              {servicosRanking.length === 0 ? (
-                <p className="text-xs font-bold opacity-50 flex-1 flex items-center" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>Sem dados registrados.</p>
-              ) : (
-                <div className="space-y-2 flex-1 overflow-y-auto custom-scrollbar pr-1">
-                  {servicosRanking.slice(0, 3).map((servico, idx) => (
-                    <div key={idx} className="flex justify-between items-center text-xs">
-                      <span className="font-bold truncate pr-2" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{idx + 1}. {servico.nome}</span>
-                      <span className="text-[9px] px-2 py-0.5 rounded font-black" style={{ backgroundColor: 'rgba(128,128,128,0.1)', color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{servico.quantidade}x</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-          </div>
-        )}
-      </div>
-      {/* ========================================================= */}
-
       <div className="flex items-center justify-between mt-12 mb-4">
         <h2 className="text-xl font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
           <CalendarDays size={20} /> Fila por Barbeiro
         </h2>
       </div>
 
-      {/* SELETOR DE DIAS DA SEMANA */}
       <div className="flex gap-3 overflow-x-auto pb-4 custom-scrollbar mb-4">
         {diasSemana.map((dia, idx) => {
           const dadosDia = getFormatosData(dia);
@@ -629,13 +519,42 @@ export default function AdminDashboard({ totalServicos }) {
                   placeholder="Pesquisar cliente ou serviço..."
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
-                  className="w-full rounded-2xl py-4 px-6 outline-none transition-all font-bold border focus:brightness-110"
+                  className="w-full rounded-2xl py-4 px-6 outline-none transition-all font-bold border focus:brightness-110 mb-4"
                   style={{ 
                     backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', 
                     borderColor: configCores?.borda || 'var(--cor-borda)', 
                     color: configCores?.texto || 'var(--cor-texto-principal)' 
                   }}
                 />
+
+                {/* ========================================== */}
+                {/* BOTÕES DE ABAS ADICIONADOS AQUI */}
+                {/* ========================================== */}
+                <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-2">
+                  <button 
+                    onClick={() => setAbaHistorico('agendamento')}
+                    className="px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border"
+                    style={{
+                      backgroundColor: abaHistorico === 'agendamento' ? (configCores?.primaria || '#16a34a') : 'transparent',
+                      color: abaHistorico === 'agendamento' ? '#ffffff' : (configCores?.textoSecundario || 'var(--cor-texto-secundario)'),
+                      borderColor: abaHistorico === 'agendamento' ? (configCores?.primaria || '#16a34a') : (configCores?.borda || 'var(--cor-borda)')
+                    }}
+                  >
+                    Agendamentos do Site
+                  </button>
+                  <button 
+                    onClick={() => setAbaHistorico('comanda')}
+                    className="px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border"
+                    style={{
+                      backgroundColor: abaHistorico === 'comanda' ? (configCores?.primaria || '#16a34a') : 'transparent',
+                      color: abaHistorico === 'comanda' ? '#ffffff' : (configCores?.textoSecundario || 'var(--cor-texto-secundario)'),
+                      borderColor: abaHistorico === 'comanda' ? (configCores?.primaria || '#16a34a') : (configCores?.borda || 'var(--cor-borda)')
+                    }}
+                  >
+                    Comandas Avulsas
+                  </button>
+                </div>
+                {/* ========================================== */}
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">

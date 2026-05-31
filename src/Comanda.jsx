@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, query, addDoc, updateDoc, doc, increment } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc } from 'firebase/firestore'; // Removido updateDoc que não é mais usado aqui
 import { X, Plus, Trash2, ShoppingBag, Scissors, User } from 'lucide-react';
 
 export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
@@ -129,19 +129,9 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
       // 1. Salva a Comanda no banco e CAPTURA O ID (docRef)
       const docRef = await addDoc(collection(db, "comandas"), novaComanda);
 
-      // 2. BAIXA AUTOMÁTICA DE ESTOQUE
-      const produtosVendidos = itensSelecionados.filter(item => item.tipo === 'produto');
-      for (const produto of produtosVendidos) {
-        if (produto.id) {
-          const produtoRef = doc(db, "produtos", produto.id);
-          // O increment(-1) subtrai 1 da quantidade atual no banco de dados com segurança
-          await updateDoc(produtoRef, {
-            quantidadeAtual: increment(-1)
-          });
-        }
-      }
+      // (A lógica de baixa de estoque foi removida daqui e movida para a tela de pagamento final)
 
-      // 3. Chama a tela de pagamento PASSANDO O ID e a origem
+      // 2. Chama a tela de pagamento PASSANDO O ID e a origem
       onAbrirPagamento({ 
         id: docRef.id, 
         origem: 'comanda', // <-- Avisa o painel de onde veio

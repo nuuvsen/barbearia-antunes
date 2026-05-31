@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, doc, getDoc, addDoc, onSnapshot, deleteDoc, updateDoc } from 'firebase/firestore'
+import { collection, getDocs, doc, getDoc, addDoc, onSnapshot, deleteDoc, updateDoc, query, where } from 'firebase/firestore'
 import { 
   Banknote, CreditCard, QrCode, TrendingUp, 
-  Scissors, User, Percent, Save, XCircle, CheckCircle2, Calendar, UserPlus, Trash2, Edit2, ShoppingBag, Wallet
+  Scissors, User, Save, XCircle, CheckCircle2, Calendar, UserPlus, Trash2, Edit2, ShoppingBag, Wallet,
+  DollarSign, Receipt, TrendingDown 
 } from 'lucide-react'
-import AdminComissoes from './AdminComissoes' // <-- Importação do modal de comissões
+import AdminComissoes from './AdminComissoes' 
 
 export default function AdminGerencia() {
   // ==========================================
@@ -24,6 +25,14 @@ export default function AdminGerencia() {
     },
     barbeiros: {} 
   })
+
+  // ESTADOS DA VISÃO GERAL DO MÊS
+  const [visaoGeral, setVisaoGeral] = useState({
+    faturamentoBruto: 0,
+    totalDespesas: 0,
+    lucroReal: 0,
+    servicosRanking: []
+  });
   
   const [cores, setCores] = useState({
     primaria: '#922020',
@@ -44,8 +53,6 @@ export default function AdminGerencia() {
   const [comissaoServico, setComissaoServico] = useState(50);
   const [comissaoProduto, setComissaoProduto] = useState(15);
   const [editandoId, setEditandoId] = useState(null);
-
-  // Estado para controlar a exibição do Modal de Comissões
   const [mostrarComissoes, setMostrarComissoes] = useState(false);
 
   // ==========================================
@@ -71,6 +78,62 @@ export default function AdminGerencia() {
       setCores(docConfig.data().cores)
     }
     await calcularRelatorios()
+    await calcularVisaoGeralDoMes()
+    setCarregando(false)
+  }
+
+  const calcularVisaoGeralDoMes = async () => {
+    try {
+      const dataAtual = new Date();
+      const mesAtual = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
+
+      // 1. Busca TODAS as comandas do mês
+      const qComandas = query(collection(db, "comandas"), where("mesReferencia", "==", mesAtual));
+      const snapshotComandas = await getDocs(qComandas);
+      
+      const comandas = [];
+      let somaLucroBarbearia = 0; 
+      let faturamentoBruto = 0;
+
+      snapshotComandas.forEach((doc) => {
+        const dados = doc.data();
+        comandas.push(dados);
+        somaLucroBarbearia += Number(dados.lucroBarbearia || 0); 
+        faturamentoBruto += (dados.valorTotal || 0);
+      });
+
+      // 2. Busca TODAS as despesas do mês
+      const qDespesas = query(collection(db, "despesas"), where("mesReferencia", "==", mesAtual));
+      const snapshotDespesas = await getDocs(qDespesas);
+      
+      let somaDespesas = 0;
+      snapshotDespesas.forEach((doc) => {
+        somaDespesas += Number(doc.data().valor || 0);
+      });
+
+      // 3. Ranking de Serviços
+      const contagemServicos = {};
+      comandas.forEach(comanda => {
+        if (comanda.servicos && Array.isArray(comanda.servicos)) {
+          comanda.servicos.forEach(servico => {
+            contagemServicos[servico] = (contagemServicos[servico] || 0) + 1;
+          });
+        }
+      });
+
+      const ranking = Object.entries(contagemServicos)
+        .map(([nome, quantidade]) => ({ nome, quantidade }))
+        .sort((a, b) => b.quantidade - a.quantidade);
+
+      setVisaoGeral({
+        faturamentoBruto,
+        totalDespesas: somaDespesas,
+        lucroReal: somaLucroBarbearia - somaDespesas,
+        servicosRanking: ranking
+      });
+    } catch (error) {
+      console.error("Erro ao buscar visão geral:", error);
+    }
   }
 
   const calcularRelatorios = async () => {
@@ -141,10 +204,8 @@ export default function AdminGerencia() {
       financeiro: financeiroMap,
       barbeiros: agrupamentoBarbeiros
     })
-    setCarregando(false)
   }
 
-  // Monitorar Barbeiros em Tempo Real
   useEffect(() => {
     carregarDadosIniciais()
     const unsubscribe = onSnapshot(collection(db, "barbeiros"), (snapshot) => {
@@ -205,7 +266,6 @@ export default function AdminGerencia() {
   return (
     <div className="animate-in fade-in duration-500 pb-20 min-h-screen relative" style={{ color: cores.texto }}>
       
-      {/* MODAL DE COMISSÕES (Renderiza por cima se ativo) */}
       {mostrarComissoes && (
         <AdminComissoes onClose={() => setMostrarComissoes(false)} />
       )}
@@ -220,7 +280,73 @@ export default function AdminGerencia() {
         </p>
       </div>
 
-      {/* BLOCO 1: RESUMO GERAL */}
+      {/* ========================================================= */}
+      {/* NOVA SEÇÃO MOVIDA DO DASHBOARD: VISÃO GERAL FINANCEIRA */}
+      {/* ========================================================= */}
+      <div className="mb-10">
+        <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4 flex items-center gap-2" 
+            style={{ color: cores.textoSecundario }}>
+          <TrendingUp size={16} /> Visão Geral Financeira (Mês Atual)
+        </h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" 
+               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Faturamento Bruto</p>
+              <DollarSign size={18} className="text-blue-500" />
+            </div>
+            <h2 className="text-3xl font-black text-blue-500 truncate">
+              {formatarMoeda(visaoGeral.faturamentoBruto)}
+            </h2>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" 
+               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Despesas no Mês</p>
+              <TrendingDown size={18} className="text-red-500" />
+            </div>
+            <h2 className="text-3xl font-black text-red-500 truncate">
+              {formatarMoeda(visaoGeral.totalDespesas)}
+            </h2>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between relative overflow-hidden" 
+               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2 z-10">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Lucro Líquido Real</p>
+              <Receipt size={18} className="text-green-500" />
+            </div>
+            <h2 className="text-3xl font-black text-green-500 truncate z-10">
+              {formatarMoeda(visaoGeral.lucroReal)}
+            </h2>
+            {visaoGeral.lucroReal < 0 && <span className="absolute bottom-2 right-4 text-[8px] font-black text-red-500 uppercase z-10">Prejuízo</span>}
+          </div>
+
+          <div className="p-5 rounded-3xl border overflow-hidden flex flex-col" 
+               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <p className="text-[10px] uppercase font-black opacity-50 mb-3" style={{ color: cores.textoSecundario }}>Top Serviços</p>
+            {visaoGeral.servicosRanking.length === 0 ? (
+              <p className="text-xs font-bold opacity-50 flex-1 flex items-center" style={{ color: cores.texto }}>Sem dados.</p>
+            ) : (
+              <div className="space-y-2 flex-1 overflow-y-auto custom-scrollbar pr-1">
+                {visaoGeral.servicosRanking.slice(0, 3).map((servico, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-xs">
+                    <span className="font-bold truncate pr-2" style={{ color: cores.texto }}>{idx + 1}. {servico.nome}</span>
+                    <span className="text-[9px] px-2 py-0.5 rounded font-black" style={{ backgroundColor: hexToRgba(cores.fundo, 0.5), color: cores.textoSecundario }}>{servico.quantidade}x</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {/* ========================================================= */}
+
+
+      {/* BLOCO 1: RESUMO GERAL DE HOJE E TOTAL DE AGENDAMENTOS */}
+      <h2 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-center md:text-left mt-8" style={{ color: cores.textoSecundario }}>Atividade da Barbearia</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
         <div 
           className="p-8 rounded-3xl shadow-xl relative overflow-hidden group flex flex-col justify-between"
@@ -237,7 +363,7 @@ export default function AdminGerencia() {
               <div className="flex items-center gap-2">
                 <Calendar size={14} className="opacity-60" />
                 <div className="flex flex-col">
-                  <span className="text-[8px] font-black uppercase opacity-60">Total do Mês Atual</span>
+                  <span className="text-[8px] font-black uppercase opacity-60">Total do Mês (Somente Agendamentos)</span>
                   <span className="text-lg font-black">{formatarMoeda(stats.faturamentoMensal)}</span>
                 </div>
               </div>
