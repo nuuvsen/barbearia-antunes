@@ -4,9 +4,11 @@ import { collection, getDocs, doc, getDoc, addDoc, onSnapshot, deleteDoc, update
 import { 
   Banknote, CreditCard, QrCode, TrendingUp, 
   Scissors, User, Save, XCircle, CheckCircle2, Calendar, UserPlus, Trash2, Edit2, ShoppingBag, Wallet,
-  DollarSign, Receipt, TrendingDown 
+  DollarSign, Receipt, TrendingDown, Eye, Activity
 } from 'lucide-react'
 import AdminComissoes from './AdminComissoes' 
+import TicketMedio from './TicketMedio'
+import AdminDespesas from './AdminDespesas' // <-- IMPORTAMOS O COMPONENTE DE DESPESAS
 
 export default function AdminGerencia() {
   // ==========================================
@@ -15,6 +17,8 @@ export default function AdminGerencia() {
   const [stats, setStats] = useState({ 
     faturamento: 0, 
     faturamentoMensal: 0, 
+    ticketMedioHoje: 0,
+    ticketMedioMes: 0,
     total: 0,
     concluidos: 0,
     cancelados: 0,
@@ -26,14 +30,21 @@ export default function AdminGerencia() {
     barbeiros: {} 
   })
 
-  // ESTADOS DA VISÃO GERAL DO MÊS
+  // ESTADOS DA VISÃO GERAL DO MÊS E PREVIEW
   const [visaoGeral, setVisaoGeral] = useState({
     faturamentoBruto: 0,
     totalDespesas: 0,
     lucroReal: 0,
-    servicosRanking: []
+    servicosRanking: [],
+    comandasMes: [],
+    despesasMes: []
   });
   
+  const [previewInfo, setPreviewInfo] = useState(null); 
+  const [mostrarTicketMedio, setMostrarTicketMedio] = useState(false); 
+  const [mostrarDespesas, setMostrarDespesas] = useState(false); // <-- ESTADO PARA CONTROLAR AS DESPESAS
+  const [agendamentosDados, setAgendamentosDados] = useState([]); 
+
   const [cores, setCores] = useState({
     primaria: '#922020',
     fundo: '#bababa',
@@ -97,7 +108,7 @@ export default function AdminGerencia() {
 
       snapshotComandas.forEach((doc) => {
         const dados = doc.data();
-        comandas.push(dados);
+        comandas.push({ id: doc.id, ...dados });
         somaLucroBarbearia += Number(dados.lucroBarbearia || 0); 
         faturamentoBruto += (dados.valorTotal || 0);
       });
@@ -106,9 +117,12 @@ export default function AdminGerencia() {
       const qDespesas = query(collection(db, "despesas"), where("mesReferencia", "==", mesAtual));
       const snapshotDespesas = await getDocs(qDespesas);
       
+      const despesas = [];
       let somaDespesas = 0;
       snapshotDespesas.forEach((doc) => {
-        somaDespesas += Number(doc.data().valor || 0);
+        const dados = doc.data();
+        despesas.push({ id: doc.id, ...dados });
+        somaDespesas += Number(dados.valor || 0);
       });
 
       // 3. Ranking de Serviços
@@ -129,7 +143,9 @@ export default function AdminGerencia() {
         faturamentoBruto,
         totalDespesas: somaDespesas,
         lucroReal: somaLucroBarbearia - somaDespesas,
-        servicosRanking: ranking
+        servicosRanking: ranking,
+        comandasMes: comandas,
+        despesasMes: despesas
       });
     } catch (error) {
       console.error("Erro ao buscar visão geral:", error);
@@ -139,12 +155,18 @@ export default function AdminGerencia() {
   const calcularRelatorios = async () => {
     const snap = await getDocs(collection(db, "agendamentos"))
     
+    const todosAgendamentos = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setAgendamentosDados(todosAgendamentos);
+
     const hojeStr = new Date().toLocaleDateString('pt-BR');
     const mesAtual = hojeStr.split('/')[1];
     const anoAtual = hojeStr.split('/')[2];
 
     let somaHoje = 0
     let somaMes = 0
+    let qtdHoje = 0
+    let qtdMes = 0
+
     let totalConcluidos = 0
     let totalCancelados = 0
     let financeiroMap = {
@@ -154,18 +176,12 @@ export default function AdminGerencia() {
     }
     let agrupamentoBarbeiros = {}
 
-    snap.docs.forEach(d => {
-      const data = d.data()
+    todosAgendamentos.forEach(data => {
       const valStr = data.preco?.toString().replace(/\D/g, '') || '0'
       const valorReal = parseInt(valStr) / 100 
       
       const dataServico = data.data || ""; 
       const [diaDoc, mesDoc, anoDoc] = dataServico.split('/');
-
-      if (data.status === 'Concluído') {
-        if (dataServico === hojeStr) somaHoje += valorReal;
-        if (mesDoc === mesAtual && anoDoc === anoAtual) somaMes += valorReal;
-      }
 
       if (data.status === 'Cancelado') {
         totalCancelados++
@@ -174,6 +190,15 @@ export default function AdminGerencia() {
       if (data.status === 'Concluído') {
         totalConcluidos++
         
+        if (dataServico === hojeStr) {
+          somaHoje += valorReal;
+          qtdHoje++;
+        }
+        if (mesDoc === mesAtual && anoDoc === anoAtual) {
+          somaMes += valorReal;
+          qtdMes++;
+        }
+
         const metodo = (data.formaPagamento || data.metodoPagamento || '').toLowerCase()
         if (metodo.includes('pix')) {
           financeiroMap.pix.valor += valorReal
@@ -195,9 +220,14 @@ export default function AdminGerencia() {
       }
     })
 
+    const ticketHoje = qtdHoje > 0 ? somaHoje / qtdHoje : 0;
+    const ticketMes = qtdMes > 0 ? somaMes / qtdMes : 0;
+
     setStats({ 
       faturamento: somaHoje, 
       faturamentoMensal: somaMes,
+      ticketMedioHoje: ticketHoje,
+      ticketMedioMes: ticketMes,
       total: snap.docs.length,
       concluidos: totalConcluidos,
       cancelados: totalCancelados,
@@ -266,22 +296,138 @@ export default function AdminGerencia() {
   return (
     <div className="animate-in fade-in duration-500 pb-20 min-h-screen relative" style={{ color: cores.texto }}>
       
+      {/* ========================================================= */}
+      {/* COMPONENTES MODAIS */}
+      {/* ========================================================= */}
+      {mostrarTicketMedio && (
+        <TicketMedio 
+          onClose={() => setMostrarTicketMedio(false)} 
+          agendamentos={agendamentosDados} 
+          cores={cores} 
+        />
+      )}
+
       {mostrarComissoes && (
         <AdminComissoes onClose={() => setMostrarComissoes(false)} />
       )}
 
-      {/* HEADER GERAL */}
-      <div className="mb-10 border-b pb-6" style={{ borderColor: hexToRgba(cores.borda, 0.2) }}>
-        <h1 className="text-4xl font-black uppercase italic tracking-tighter">
-          Relatórios de <span style={{ color: cores.primaria }}>Gerência</span>
-        </h1>
-        <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: cores.textoSecundario }}>
-          Controle financeiro e gestão de equipe
-        </p>
+      {/* MODAL DE DESPESAS */}
+      {mostrarDespesas && (
+        <AdminDespesas onClose={() => {
+          setMostrarDespesas(false);
+          // Recarrega os dados da visão geral ao fechar as despesas para atualizar o "Lucro Líquido Real"
+          calcularVisaoGeralDoMes(); 
+        }} />
+      )}
+
+      {/* MODAL DE PREVIEW FINANCEIRO */}
+      {previewInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in duration-200">
+          <div className="rounded-[2rem] p-6 w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden relative" 
+               style={{ backgroundColor: cores.card, borderColor: cores.borda, borderWidth: '1px' }}>
+            
+            <div className="flex justify-between items-center mb-6 pb-4 border-b" style={{ borderColor: hexToRgba(cores.borda, 0.1) }}>
+              <div>
+                <h2 className="text-2xl font-black uppercase tracking-tighter" style={{ color: cores.texto }}>
+                  {previewInfo === 'receitas' && 'Prévia de Receitas do Mês'}
+                  {previewInfo === 'despesas' && 'Prévia de Despesas do Mês'}
+                  {previewInfo === 'lucro' && 'Resumo do Lucro Líquido'}
+                </h2>
+                <p className="text-[10px] uppercase font-bold opacity-60">Detalhamento dos registros atuais</p>
+              </div>
+              <button onClick={() => setPreviewInfo(null)} className="p-2 rounded-full hover:bg-black/5 transition-colors">
+                <XCircle size={28} className="text-red-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
+              {/* RENDERIZAR RECEITAS (COMANDAS) */}
+              {previewInfo === 'receitas' && (
+                visaoGeral.comandasMes.length > 0 ? visaoGeral.comandasMes.map((comanda, idx) => (
+                  <div key={idx} className="flex justify-between items-center p-4 rounded-2xl border" style={{ backgroundColor: hexToRgba(cores.fundo, 0.1), borderColor: hexToRgba(cores.borda, 0.1) }}>
+                    <div>
+                      <p className="font-bold text-sm uppercase">{comanda.nomeCliente || 'Cliente Avulso'}</p>
+                      <p className="text-[10px] opacity-60 uppercase">{comanda.data} - {comanda.barbeiro}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-blue-500">{formatarMoeda(comanda.valorTotal || 0)}</p>
+                      <p className="text-[10px] font-bold text-green-500 uppercase">Retido: {formatarMoeda(comanda.lucroBarbearia || 0)}</p>
+                    </div>
+                  </div>
+                )) : <p className="text-center font-bold opacity-50 py-10">Nenhuma receita registrada neste mês.</p>
+              )}
+
+              {/* RENDERIZAR DESPESAS */}
+              {previewInfo === 'despesas' && (
+                visaoGeral.despesasMes.length > 0 ? visaoGeral.despesasMes.map((despesa, idx) => (
+                  <div key={idx} className="flex justify-between items-center p-4 rounded-2xl border" style={{ backgroundColor: hexToRgba(cores.fundo, 0.1), borderColor: hexToRgba(cores.borda, 0.1) }}>
+                    <div>
+                      <p className="font-bold text-sm uppercase">{despesa.descricao}</p>
+                      <p className="text-[10px] opacity-60 uppercase">{despesa.dataPagamento || despesa.data}</p>
+                    </div>
+                    <div>
+                      <p className="font-black text-red-500">- {formatarMoeda(despesa.valor || 0)}</p>
+                    </div>
+                  </div>
+                )) : <p className="text-center font-bold opacity-50 py-10">Nenhuma despesa registrada neste mês.</p>
+              )}
+
+              {/* RENDERIZAR RESUMO DE LUCRO */}
+              {previewInfo === 'lucro' && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center p-5 rounded-2xl bg-blue-500/10 border border-blue-500/20">
+                    <span className="font-black uppercase text-sm text-blue-600">Total Faturado (Bruto)</span>
+                    <span className="font-black text-xl text-blue-600">{formatarMoeda(visaoGeral.faturamentoBruto)}</span>
+                  </div>
+                  
+                  <div className="flex justify-between items-center p-5 rounded-2xl bg-orange-500/10 border border-orange-500/20">
+                    <div>
+                      <span className="font-black uppercase text-sm text-orange-600">Total Retido p/ Barbearia</span>
+                      <p className="text-[10px] text-orange-600/70 font-bold uppercase">Após pagamento de comissões</p>
+                    </div>
+                    <span className="font-black text-xl text-orange-600">{formatarMoeda(visaoGeral.lucroReal + visaoGeral.totalDespesas)}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center p-5 rounded-2xl bg-red-500/10 border border-red-500/20">
+                    <span className="font-black uppercase text-sm text-red-600">Total de Despesas</span>
+                    <span className="font-black text-xl text-red-600">- {formatarMoeda(visaoGeral.totalDespesas)}</span>
+                  </div>
+
+                  <hr style={{ borderColor: hexToRgba(cores.borda, 0.1) }} className="my-4"/>
+
+                  <div className="flex justify-between items-center p-6 rounded-3xl" style={{ backgroundColor: cores.primaria }}>
+                    <span className="font-black uppercase text-white">Lucro Líquido Real</span>
+                    <span className="font-black text-3xl text-white">{formatarMoeda(visaoGeral.lucroReal)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HEADER GERAL (ATUALIZADO COM O BOTÃO DE DESPESAS) */}
+      <div className="mb-10 border-b pb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4" style={{ borderColor: hexToRgba(cores.borda, 0.2) }}>
+        <div>
+          <h1 className="text-4xl font-black uppercase italic tracking-tighter">
+            Relatórios de <span style={{ color: cores.primaria }}>Gerência</span>
+          </h1>
+          <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: cores.textoSecundario }}>
+            Controle financeiro e gestão de equipe
+          </p>
+        </div>
+
+        {/* BOTÃO PARA ABRIR AS DESPESAS */}
+        <button 
+          onClick={() => setMostrarDespesas(true)}
+          className="px-5 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2 bg-red-500 text-white"
+        >
+          <TrendingDown size={16} /> Lançar Despesas
+        </button>
       </div>
 
       {/* ========================================================= */}
-      {/* NOVA SEÇÃO MOVIDA DO DASHBOARD: VISÃO GERAL FINANCEIRA */}
+      {/* VISÃO GERAL FINANCEIRA */}
       {/* ========================================================= */}
       <div className="mb-10">
         <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4 flex items-center gap-2" 
@@ -290,8 +436,10 @@ export default function AdminGerencia() {
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="p-6 rounded-3xl border flex flex-col justify-between" 
-               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+          <div 
+            onClick={() => setPreviewInfo('receitas')}
+            className="p-6 rounded-3xl border flex flex-col justify-between cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all relative group" 
+            style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
             <div className="flex justify-between items-start mb-2">
               <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Faturamento Bruto</p>
               <DollarSign size={18} className="text-blue-500" />
@@ -299,10 +447,15 @@ export default function AdminGerencia() {
             <h2 className="text-3xl font-black text-blue-500 truncate">
               {formatarMoeda(visaoGeral.faturamentoBruto)}
             </h2>
+            <div className="absolute inset-0 bg-blue-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center z-20">
+              <span className="bg-white/90 text-blue-600 text-[10px] font-black uppercase px-3 py-1 rounded-full flex items-center gap-1 shadow-sm"><Eye size={12}/> Ver Detalhes</span>
+            </div>
           </div>
 
-          <div className="p-6 rounded-3xl border flex flex-col justify-between" 
-               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+          <div 
+            onClick={() => setPreviewInfo('despesas')}
+            className="p-6 rounded-3xl border flex flex-col justify-between cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all relative group" 
+            style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
             <div className="flex justify-between items-start mb-2">
               <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Despesas no Mês</p>
               <TrendingDown size={18} className="text-red-500" />
@@ -310,10 +463,15 @@ export default function AdminGerencia() {
             <h2 className="text-3xl font-black text-red-500 truncate">
               {formatarMoeda(visaoGeral.totalDespesas)}
             </h2>
+            <div className="absolute inset-0 bg-red-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center z-20">
+               <span className="bg-white/90 text-red-600 text-[10px] font-black uppercase px-3 py-1 rounded-full flex items-center gap-1 shadow-sm"><Eye size={12}/> Ver Detalhes</span>
+            </div>
           </div>
 
-          <div className="p-6 rounded-3xl border flex flex-col justify-between relative overflow-hidden" 
-               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+          <div 
+            onClick={() => setPreviewInfo('lucro')}
+            className="p-6 rounded-3xl border flex flex-col justify-between relative overflow-hidden cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all group" 
+            style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
             <div className="flex justify-between items-start mb-2 z-10">
               <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Lucro Líquido Real</p>
               <Receipt size={18} className="text-green-500" />
@@ -322,6 +480,9 @@ export default function AdminGerencia() {
               {formatarMoeda(visaoGeral.lucroReal)}
             </h2>
             {visaoGeral.lucroReal < 0 && <span className="absolute bottom-2 right-4 text-[8px] font-black text-red-500 uppercase z-10">Prejuízo</span>}
+            <div className="absolute inset-0 bg-green-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center z-20">
+               <span className="bg-white/90 text-green-600 text-[10px] font-black uppercase px-3 py-1 rounded-full flex items-center gap-1 shadow-sm"><Eye size={12}/> Ver Resumo</span>
+            </div>
           </div>
 
           <div className="p-5 rounded-3xl border overflow-hidden flex flex-col" 
@@ -345,56 +506,66 @@ export default function AdminGerencia() {
       {/* ========================================================= */}
 
 
-      {/* BLOCO 1: RESUMO GERAL DE HOJE E TOTAL DE AGENDAMENTOS */}
-      <h2 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-center md:text-left mt-8" style={{ color: cores.textoSecundario }}>Atividade da Barbearia</h2>
+      {/* BLOCO 1: ATIVIDADE, DESEMPENHO E TICKET MÉDIO */}
+      <h2 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-center md:text-left mt-8 flex items-center gap-2" style={{ color: cores.textoSecundario }}>
+        <Activity size={14}/> Atividade e Desempenho
+      </h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        
+        {/* CARD TICKET MÉDIO CLICÁVEL */}
         <div 
-          className="p-8 rounded-3xl shadow-xl relative overflow-hidden group flex flex-col justify-between"
+          onClick={() => setMostrarTicketMedio(true)}
+          className="p-8 rounded-3xl shadow-xl relative overflow-hidden group flex flex-col justify-between cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all"
           style={{ backgroundColor: cores.primaria, color: '#fff' }}
         >
           <TrendingUp className="absolute -right-4 -top-4 w-32 h-32 text-black opacity-10 group-hover:scale-110 transition-transform duration-500" />
           
           <div>
-            <p className="text-xs font-black uppercase tracking-widest opacity-80 mb-2 relative z-10">Faturamento Hoje</p>
-            <p className="text-4xl font-black relative z-10">{formatarMoeda(stats.faturamento)}</p>
+            <p className="text-[10px] font-black uppercase tracking-widest opacity-80 mb-2 relative z-10 flex items-center gap-2">Ticket Médio (Hoje)</p>
+            <p className="text-4xl font-black relative z-10">{formatarMoeda(stats.ticketMedioHoje)}</p>
+            <p className="text-[10px] font-bold opacity-60 mt-1 relative z-10">Média de gasto por cliente no dia</p>
           </div>
 
           <div className="mt-6 pt-4 border-t border-white/20 relative z-10">
               <div className="flex items-center gap-2">
                 <Calendar size={14} className="opacity-60" />
                 <div className="flex flex-col">
-                  <span className="text-[8px] font-black uppercase opacity-60">Total do Mês (Somente Agendamentos)</span>
-                  <span className="text-lg font-black">{formatarMoeda(stats.faturamentoMensal)}</span>
+                  <span className="text-[8px] font-black uppercase opacity-60">Ticket Médio do Mês Atual</span>
+                  <span className="text-lg font-black">{formatarMoeda(stats.ticketMedioMes)}</span>
                 </div>
               </div>
           </div>
+          
+          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center z-20">
+            <span className="bg-white text-[10px] font-black uppercase px-4 py-2 rounded-full flex items-center gap-2 shadow-xl" style={{ color: cores.primaria }}>
+              <Eye size={14}/> Análise de Ticket Completa
+            </span>
+          </div>
         </div>
 
+        {/* CARD: TOTAL AGENDADOS E TAXA DE CANCELAMENTO */}
         <div 
           className="border p-8 rounded-3xl flex flex-col justify-center"
           style={{ backgroundColor: cores.card, borderColor: cores.borda }}
         >
-          <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: cores.textoSecundario }}>Total Agendados</p>
+          <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: cores.textoSecundario }}>Volume de Agendamentos</p>
           <p className="text-5xl font-black" style={{ color: cores.texto }}>{stats.total}</p>
           
           <div className="flex gap-4 mt-4 pt-4 border-t" style={{ borderColor: hexToRgba(cores.borda, 0.1) }}>
-              <div className="flex items-center gap-1.5">
-                <XCircle size={12} className="text-red-500" />
-                <div className="flex flex-col">
+              <div className="flex items-center gap-1.5 w-full">
+                <XCircle size={14} className="text-red-500" />
+                <div className="flex flex-col flex-1">
                   <span className="text-[8px] font-black uppercase opacity-50">Cancelados</span>
-                  <span className="text-sm font-black text-red-500">{stats.cancelados}</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 size={12} className="text-blue-500" />
-                <div className="flex flex-col">
-                  <span className="text-[8px] font-black uppercase opacity-50">Total Líquido</span>
-                  <span className="text-sm font-black text-blue-500">{stats.total - stats.cancelados}</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-black text-red-500">{stats.cancelados}</span>
+                    <span className="text-[9px] font-bold text-red-500/70">{stats.total > 0 ? Math.round((stats.cancelados / stats.total) * 100) : 0}%</span>
+                  </div>
                 </div>
               </div>
           </div>
         </div>
 
+        {/* CARD: TOTAL PAGOS E TAXA DE SUCESSO */}
         <div 
           className="border p-8 rounded-3xl flex flex-col justify-center border-b-4"
           style={{ 
@@ -403,8 +574,18 @@ export default function AdminGerencia() {
             borderBottomColor: '#22c55e' 
           }}
         >
-          <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: cores.textoSecundario }}>Total Pagos</p>
+          <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: cores.textoSecundario }}>Atendimentos Pagos</p>
           <p className="text-5xl font-black" style={{ color: '#22c55e' }}>{stats.concluidos}</p>
+
+          <div className="flex gap-4 mt-4 pt-4 border-t" style={{ borderColor: hexToRgba(cores.borda, 0.1) }}>
+              <div className="flex items-center gap-1.5 w-full">
+                <CheckCircle2 size={14} className="text-green-500" />
+                <div className="flex flex-col flex-1">
+                  <span className="text-[8px] font-black uppercase opacity-50">Taxa de Conversão</span>
+                  <span className="text-sm font-black text-green-500">{stats.total > 0 ? Math.round((stats.concluidos / stats.total) * 100) : 0}% Sucesso</span>
+                </div>
+              </div>
+          </div>
         </div>
       </div>
 
@@ -505,7 +686,6 @@ export default function AdminGerencia() {
           Gerenciar <span style={{ color: cores.primaria }}>Equipe</span>
         </h2>
 
-        {/* BOTÃO PARA ABRIR AS COMISSÕES DETALHADAS */}
         <button 
           onClick={() => setMostrarComissoes(true)}
           className="px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2"
