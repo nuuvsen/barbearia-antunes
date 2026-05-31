@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import Sobre from './Sobre.jsx';
 import { 
   LayoutDashboard, 
   Clock, 
@@ -13,7 +14,8 @@ import {
   ChevronRight,
   LogOut,
   Settings,
-  Package // Importado para representar Produtos
+  Package, // Importado para representar Produtos
+  HelpCircle // <-- ADICIONADO: Ícone para a página Sobre
 } from 'lucide-react'
 
 import AdminDashboard from './AdminDashboard'
@@ -24,7 +26,7 @@ import AdminPlanos from './AdminPlanos'
 import AdminGerencia from './AdminGerencia'
 import AdminAgenda from './AdminAgenda'
 import AdminConfiguracoes from './AdminConfiguracoes'
-import AdminProdutos from './AdminProdutos' // Componente que você criará
+import AdminProdutos from './AdminProdutos' 
 
 export default function Admin({ servicos, aoMudar }) {
   const [abaAtiva, setAbaAtiva] = useState('dashboard')
@@ -97,7 +99,7 @@ export default function Admin({ servicos, aoMudar }) {
           <NavItem id="dashboard" label="Dashboard" icon={LayoutDashboard} />
           <NavItem id="agenda" label="Agenda & Horários" icon={Clock} />
           <NavItem id="servicos" label="Serviços" icon={Scissors} />
-          <NavItem id="produtos" label="Produtos" icon={Package} /> {/* Novo Item */}
+          <NavItem id="produtos" label="Produtos" icon={Package} /> 
           <NavItem id="barbeiros" label="Barbeiros" icon={UserCircle} />
           <NavItem id="clientes" label="Clientes" icon={Users} />
           <NavItem id="planos" label="Planos" icon={Gem} />
@@ -108,7 +110,10 @@ export default function Admin({ servicos, aoMudar }) {
           </div>
         </nav>
 
-        <div className="mt-auto pt-6 border-t" style={{ borderTopColor: 'var(--cor-borda)' }}>
+        {/* <-- ADICIONADO: Seção inferior com o Sobre acima do Sair --> */}
+        <div className="mt-auto pt-6 border-t flex flex-col gap-2" style={{ borderTopColor: 'var(--cor-borda)' }}>
+          <NavItem id="sobre" label="Sobre o Sistema" icon={HelpCircle} />
+          
           <Link 
             to="/" 
             className="flex items-center gap-3 p-3 text-xs font-black uppercase tracking-widest transition-colors hover:opacity-80"
@@ -144,12 +149,15 @@ export default function Admin({ servicos, aoMudar }) {
           {abaAtiva === 'dashboard' && <AdminDashboard totalServicos={servicos.length} />}
           {abaAtiva === 'agenda' && <AdminAgenda />}
           {abaAtiva === 'servicos' && <AdminServicos servicos={servicos} aoMudar={aoMudar} />}
-          {abaAtiva === 'produtos' && <AdminProdutos />} {/* Nova Rota Interna */}
+          {abaAtiva === 'produtos' && <AdminProdutos />} 
           {abaAtiva === 'barbeiros' && <AdminBarbeiros />}
           {abaAtiva === 'clientes' && <AdminClientes />}
           {abaAtiva === 'planos' && <AdminPlanos />}
           {abaAtiva === 'gerencia' && <AdminGerencia />}
           {abaAtiva === 'configuracoes' && <AdminConfiguracoes />}
+          
+          {/* <-- ADICIONADO: Renderização do componente Sobre --> */}
+          {abaAtiva === 'sobre' && <Sobre />}
         </div>
       </main>
 

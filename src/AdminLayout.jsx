@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Menu, X, LayoutDashboard, Users, Scissors, Settings, LogOut } from 'lucide-react';
+import { Menu, X, LayoutDashboard, Users, Scissors, Settings, LogOut, Bot, HelpCircle } from 'lucide-react';
 
-export default function AdminLayout({ children }) {
+// Adicionamos as props abaAtiva e setAbaAtiva para o layout saber quem foi clicado
+export default function AdminLayout({ children, abaAtiva, setAbaAtiva }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
@@ -25,23 +26,33 @@ export default function AdminLayout({ children }) {
       `}>
         <div className="p-6 flex flex-col h-full">
           <div className="flex items-center justify-between mb-10">
-            <h2 className="text-2xl font-black uppercase italic italic">Antunes<span className="text-red-600">.OS</span></h2>
+            <h2 className="text-2xl font-black uppercase italic">Antunes<span className="text-red-600">.OS</span></h2>
             <button onClick={toggleSidebar} className="md:hidden text-gray-500">
               <X size={24} />
             </button>
           </div>
 
           <nav className="flex-1 space-y-2">
-            <SidebarItem icon={<LayoutDashboard size={20}/>} label="Dashboard" active />
-            <SidebarItem icon={<Users size={20}/>} label="Clientes" />
-            <SidebarItem icon={<Scissors size={20}/>} label="Serviços" />
-            <SidebarItem icon={<Settings size={20}/>} label="Configurações" />
-            <SidebarItem icon={<Bot size={20}/>} label="Suporte e Bot" active={false} />
+            <SidebarItem icon={<LayoutDashboard size={20}/>} label="Dashboard" active={abaAtiva === 'dashboard'} onClick={() => setAbaAtiva('dashboard')} />
+            <SidebarItem icon={<Users size={20}/>} label="Clientes" active={abaAtiva === 'clientes'} onClick={() => setAbaAtiva('clientes')} />
+            <SidebarItem icon={<Scissors size={20}/>} label="Serviços" active={abaAtiva === 'servicos'} onClick={() => setAbaAtiva('servicos')} />
+            <SidebarItem icon={<Settings size={20}/>} label="Configurações" active={abaAtiva === 'configuracoes'} onClick={() => setAbaAtiva('configuracoes')} />
+            <SidebarItem icon={<Bot size={20}/>} label="Suporte e Bot" active={abaAtiva === 'bot'} onClick={() => setAbaAtiva('bot')} />
           </nav>
 
-          <button className="flex items-center gap-3 p-4 text-gray-500 hover:text-red-500 transition-all font-bold uppercase text-xs">
-            <LogOut size={18} /> Sair do Painel
-          </button>
+          {/* SESSÃO INFERIOR COM SOBRE E SAIR */}
+          <div className="mt-6 pt-6 border-t border-[#1f1f1f] space-y-2">
+            <SidebarItem 
+              icon={<HelpCircle size={20}/>} 
+              label="Sobre o Sistema" 
+              active={abaAtiva === 'sobre'} 
+              onClick={() => setAbaAtiva('sobre')} 
+            />
+            
+            <button className="w-full flex items-center gap-4 p-4 text-gray-500 hover:text-red-500 hover:bg-[#111] rounded-2xl transition-all font-black uppercase text-[11px] tracking-widest">
+              <LogOut size={18} /> Sair do Painel
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -66,9 +77,12 @@ export default function AdminLayout({ children }) {
   );
 }
 
-function SidebarItem({ icon, label, active = false }) {
+// O componente do item agora recebe a função 'onClick'
+function SidebarItem({ icon, label, active = false, onClick }) {
   return (
-    <div className={`
+    <div 
+      onClick={onClick}
+      className={`
       flex items-center gap-4 p-4 rounded-2xl cursor-pointer transition-all font-black uppercase text-[11px] tracking-widest
       ${active ? 'bg-red-600 text-white shadow-lg shadow-red-900/20' : 'text-gray-500 hover:bg-[#111] hover:text-white'}
     `}>
