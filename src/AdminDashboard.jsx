@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, onSnapshot, query, doc, updateDoc } from 'firebase/firestore' 
+import { collection, onSnapshot, query, doc, updateDoc, where } from 'firebase/firestore' 
 import { Search, X, Plus, Clock, CalendarDays } from 'lucide-react'
+import toast from 'react-hot-toast' // 👈 Importação do Toast adicionada
 import AdminPagamento from './AdminPagamento'
 import Comanda from './Comanda'
 
@@ -38,12 +39,42 @@ export default function AdminDashboard({ totalServicos }) {
     return () => unsubAgenda();
   }, []);
 
-  // 3. BUSCA AGENDAMENTOS EM TEMPO REAL
+  // =========================================================================
+  // 3. BUSCA AGENDAMENTOS EM TEMPO REAL (OTIMIZADO E COM FUSO HORÁRIO CORRETO)
+  // =========================================================================
   useEffect(() => {
-    const q = query(collection(db, "agendamentos"));
+    // Função para pegar a data no formato YYYY-MM-DD exato da máquina local (Brasil)
+    const getLocalISO = (d) => {
+      const ano = d.getFullYear();
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const dia = String(d.getDate()).padStart(2, '0');
+      return `${ano}-${mes}-${dia}`;
+    };
+
+    const hoje = new Date();
+    
+    // Calcula 7 dias atrás
+    const dataInicio = new Date(hoje);
+    dataInicio.setDate(hoje.getDate() - 7); 
+    const inicioStr = getLocalISO(dataInicio); 
+
+    // Calcula 15 dias para frente
+    const dataFim = new Date(hoje);
+    dataFim.setDate(hoje.getDate() + 15); 
+    const fimStr = getLocalISO(dataFim); 
+
+    // Monta a Query limitando a busca ao período acima
+    const q = query(
+      collection(db, "agendamentos"),
+      where("data", ">=", inicioStr),
+      where("data", "<=", fimStr)
+    );
+    
+    // Executa a busca
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setAgendamentos(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+
     return () => unsubscribe();
   }, []);
 
@@ -56,10 +87,16 @@ export default function AdminDashboard({ totalServicos }) {
     return () => unsubB();
   }, []);
 
+  // =========================================================================
+  // FUNÇÕES DE AÇÃO COM TOAST NOTIFICATIONS ADICIONADOS
+  // =========================================================================
   const concluirAtendimentoFinal = async (id) => {
     try {
       // 1. Salva a conclusão no banco de dados
       await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
+      
+      // 👈 Toast de Sucesso para o fechamento da comanda
+      toast.success("Atendimento concluído com sucesso!"); 
       
       // 2. Aciona o Bot para enviar o NPS em 30 minutos
       if (agendamentoEmPagamento) {
@@ -75,6 +112,8 @@ export default function AdminDashboard({ totalServicos }) {
           });
         } catch (errorBot) {
           console.error("Erro ao acionar o bot de NPS:", errorBot);
+          // 👈 Toast de Aviso se o Bot estiver offline
+          toast("Atendimento salvo, mas o envio de NPS falhou.", { icon: '⚠️' }); 
         }
       }
 
@@ -82,6 +121,8 @@ export default function AdminDashboard({ totalServicos }) {
       setAgendamentoEmPagamento(null);
     } catch (error) {
       console.error("Erro ao concluir:", error);
+      // 👈 Toast de Erro Crítico
+      toast.error("Erro ao concluir o atendimento no sistema.");
     }
   }
 
@@ -89,8 +130,11 @@ export default function AdminDashboard({ totalServicos }) {
     if (window.confirm("Deseja marcar este agendamento como Cancelado?")) {
       try {
         await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
+        // 👈 Toast informando cancelamento concluído
+        toast.success("Agendamento marcado como cancelado!");
       } catch (error) {
         console.error("Erro ao cancelar:", error);
+        toast.error("Falha ao cancelar o agendamento.");
       }
     }
   }

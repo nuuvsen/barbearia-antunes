@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { CheckCircle, Bot, QrCode, Power, RefreshCcw, Bell, Clock, MessageSquare, Plus, Trash2, Save, Loader2, Megaphone, Send, UserSearch, Star } from 'lucide-react'
+import toast from 'react-hot-toast' // <-- Adicionado o import do toast que estava faltando!
 import { db } from './firebase'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 
@@ -67,7 +68,7 @@ export default function GerenciadorBot() {
 
   const adicionarHorario = () => {
     if (!novoHorario) return
-    if (config.horarios.includes(novoHorario)) return alert("Horário já adicionado!")
+    if (config.horarios.includes(novoHorario)) return toast("Horário já adicionado!")
     setConfig(prev => ({ ...prev, horarios: [...prev.horarios, novoHorario].sort() }))
     setNovoHorario('')
   }
@@ -80,16 +81,16 @@ export default function GerenciadorBot() {
     setSalvando(true)
     try {
       await setDoc(doc(db, 'configuracoes', 'botWhatsApp'), config)
-      alert("Configurações salvas com sucesso!")
+      toast.success("Configurações salvas com sucesso!")
     } catch (e) {
-      alert("Erro ao salvar as configurações.")
+      toast.error("Erro ao salvar as configurações.")
     }
     setSalvando(false)
   }
 
   const dispararCampanha = async () => {
-    if (!mensagemCampanha.trim()) return alert("Digite uma mensagem para a campanha.")
-    if (botStatus !== 'conectado') return alert("O bot precisa estar conectado para enviar mensagens.")
+    if (!mensagemCampanha.trim()) return toast("Digite uma mensagem para a campanha.")
+    if (botStatus !== 'conectado') return toast("O bot precisa estar conectado para enviar mensagens.")
     
     const confirmar = window.confirm("⚠️ ATENÇÃO: Esta mensagem será enviada para TODOS os seus clientes cadastrados. Tem certeza que deseja iniciar o disparo?")
     if (!confirmar) return
@@ -105,13 +106,13 @@ export default function GerenciadorBot() {
       const data = await res.json()
       
       if (data.success) {
-        alert("✅ Campanha iniciada com sucesso! Acompanhe o envio no terminal do Node.")
+        toast.success("✅ Campanha iniciada com sucesso! Acompanhe o envio no terminal do Node.")
         setMensagemCampanha('')
       } else {
-        alert("Erro ao iniciar campanha: " + data.error)
+        toast.error("Erro ao iniciar campanha: " + data.error)
       }
     } catch (error) {
-      alert("Erro ao se comunicar com o servidor do bot.")
+      toast.error("Erro ao se comunicar com o servidor do bot.")
     }
     setEnviandoCampanha(false)
   }
@@ -123,10 +124,11 @@ export default function GerenciadorBot() {
   )
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-20">
+    /* LARGURA MAXIMA EXPANDIDA (max-w-[1600px]) PARA COBRIR TELAS LARGAS */
+    <div className="w-full max-w-[1600px] mx-auto space-y-6 pb-20 animate-in fade-in duration-500">
       
       {/* CARD 1: STATUS DA CONEXÃO */}
-      <div className="rounded-[2.5rem] p-10 shadow-2xl animate-in fade-in duration-300 border transition-colors" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
+      <div className="rounded-[2.5rem] p-8 md:p-10 shadow-2xl border transition-colors" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
         <div className="flex items-center gap-4 mb-8">
           <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
             <Bot size={28} style={{ color: 'var(--cor-primaria)' }} />
@@ -141,8 +143,8 @@ export default function GerenciadorBot() {
           </div>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-8">
-          <div className="flex-1 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-6">
             <div className="border p-6 rounded-3xl" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
               <h3 className="text-[10px] font-black uppercase tracking-[0.2em] mb-4" style={{ color: 'var(--cor-texto-secundario)' }}>Status da Conexão</h3>
               <div className="flex items-center gap-3">
@@ -161,14 +163,14 @@ export default function GerenciadorBot() {
               </div>
             )}
             {botStatus === 'conectado' && (
-              <button onClick={() => alert("Para desconectar, feche o terminal ou desvincule no celular.")}
+              <button onClick={() => toast("Para desconectar, feche o terminal ou desvincule no celular.")}
                 className="w-full bg-red-600/10 text-red-500 border border-red-600/30 font-black py-5 rounded-2xl uppercase tracking-[0.2em] flex items-center justify-center gap-3 hover:bg-red-600 hover:text-white transition-all">
                 <Power size={20} /> Desconectar Bot
               </button>
             )}
           </div>
 
-          <div className="flex-1 flex flex-col items-center justify-center border p-8 rounded-3xl min-h-[250px]" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
+          <div className="flex flex-col items-center justify-center border p-8 rounded-3xl min-h-[200px]" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
             {botStatus === 'desconectado' ? (
               <div className="text-center opacity-30">
                 <QrCode size={64} className="mx-auto mb-4" style={{ color: 'var(--cor-texto-principal)' }} />
@@ -193,166 +195,153 @@ export default function GerenciadorBot() {
         </div>
       </div>
 
-      {/* CARD 2: CONFIGURAÇÕES DE FUNCIONAMENTO */}
-      <div className="border rounded-[2.5rem] p-10 shadow-sm transition-colors" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-          <div>
-            <h2 className="text-2xl font-black uppercase italic tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>
-              Comportamento do <span style={{ color: 'var(--cor-primaria)' }}>Sistema</span>
-            </h2>
-            <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: 'var(--cor-texto-secundario)' }}>Ajuste os lembretes e mensagens do seu robô</p>
+      {/* SISTEMA DE GRID LATERIZADO PARA TELAS DE PC */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+        
+        {/* COLUNA ESQUERDA (Ocupa 7 espaços): COMPORTAMENTO DO SISTEMA */}
+        <div className="xl:col-span-7 flex flex-col border rounded-[2.5rem] p-8 md:p-10 shadow-sm transition-colors" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8 border-b pb-6" style={{ borderColor: 'var(--cor-borda)' }}>
+            <div>
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter" style={{ color: 'var(--cor-texto-principal)' }}>
+                Comportamento <span style={{ color: 'var(--cor-primaria)' }}>do Sistema</span>
+              </h2>
+              <p className="text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: 'var(--cor-texto-secundario)' }}>Ajuste os lembretes e mensagens</p>
+            </div>
+            <button onClick={salvarConfiguracoes} disabled={salvando}
+              className="text-white px-6 py-3 rounded-xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95 whitespace-nowrap"
+              style={{ backgroundColor: 'var(--cor-primaria)' }}>
+              {salvando ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} {salvando ? 'Salvando...' : 'Salvar Regras'}
+            </button>
           </div>
-          <button onClick={salvarConfiguracoes} disabled={salvando}
-            className="text-white px-6 py-3 rounded-xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95"
-            style={{ backgroundColor: 'var(--cor-primaria)' }}>
-            {salvando ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} {salvando ? 'Salvando...' : 'Salvar Regras'}
-          </button>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 flex-1">
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Bell size={20} style={{ color: 'var(--cor-primaria)' }} />
+                  <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Lembretes</h3>
+                </div>
+                <button onClick={() => setConfig({...config, lembretesAtivos: !config.lembretesAtivos})} className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" style={{ backgroundColor: config.lembretesAtivos ? 'var(--cor-primaria)' : 'var(--cor-borda)' }}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.lembretesAtivos ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+              <div className={`space-y-4 transition-all duration-300 ${!config.lembretesAtivos ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                <p className="text-xs font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Horários que o bot avisa os clientes do dia:</p>
+                <div className="flex gap-2">
+                  <input type="time" value={novoHorario} onChange={(e) => setNovoHorario(e.target.value)} className="flex-1 p-3 rounded-xl font-bold text-sm outline-none border transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <button onClick={adicionarHorario} className="text-white p-3 rounded-xl transition-all hover:brightness-110 active:scale-95" style={{ backgroundColor: 'var(--cor-primaria)' }}><Plus size={20} /></button>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {config.horarios.map(h => (
+                    <div key={h} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-black tracking-wider border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-primaria)', color: 'var(--cor-texto-principal)' }}>
+                      <Clock size={14} style={{ color: 'var(--cor-primaria)' }} /> {h}
+                      <button onClick={() => removerHorario(h)} className="ml-2 text-red-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <MessageSquare size={20} style={{ color: 'var(--cor-primaria)' }} />
+                <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Textos</h3>
+              </div>
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Lembrete</label>
+                  <textarea value={config.msgLembrete} onChange={(e) => setConfig({...config, msgLembrete: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span></p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Confirmação</label>
+                  <textarea value={config.msgConfirmacao} onChange={(e) => setConfig({...config, msgConfirmacao: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-          <div className="space-y-6">
-            <div className="flex items-center justify-between border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
+        {/* COLUNA DIREITA (Ocupa 5 espaços): RADAR E CAMPANHAS (EMPILHADOS) */}
+        <div className="xl:col-span-5 flex flex-col gap-6">
+          
+          {/* RADAR DE RECUPERAÇÃO */}
+          <div className="border rounded-[2.5rem] p-8 md:p-10 shadow-sm transition-colors flex flex-col" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
+            <div className="flex items-center justify-between mb-6 border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
               <div className="flex items-center gap-3">
-                <Bell size={20} style={{ color: 'var(--cor-primaria)' }} />
-                <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Lembretes Automáticos</h3>
+                <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
+                  <UserSearch size={20} style={{ color: 'var(--cor-primaria)' }} />
+                </div>
+                <div>
+                  <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Radar de Sumidos</h3>
+                  <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Recuperação Automática</p>
+                </div>
               </div>
-              <button onClick={() => setConfig({...config, lembretesAtivos: !config.lembretesAtivos})} className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" style={{ backgroundColor: config.lembretesAtivos ? 'var(--cor-primaria)' : 'var(--cor-borda)' }}>
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.lembretesAtivos ? 'translate-x-6' : 'translate-x-1'}`} />
+              <button onClick={() => setConfig({...config, radarAtivo: !config.radarAtivo})} className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" style={{ backgroundColor: config.radarAtivo ? 'var(--cor-primaria)' : 'var(--cor-borda)' }}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.radarAtivo ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
             </div>
-            <div className={`space-y-4 transition-all duration-300 ${!config.lembretesAtivos ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
-              <p className="text-xs font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Em quais horários o bot deve avisar os clientes que têm agendamento para aquele dia?</p>
-              <div className="flex gap-2">
-                <input type="time" value={novoHorario} onChange={(e) => setNovoHorario(e.target.value)} className="flex-1 p-3 rounded-xl font-bold text-sm outline-none border transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                <button onClick={adicionarHorario} className="text-white p-3 rounded-xl transition-all hover:brightness-110 active:scale-95" style={{ backgroundColor: 'var(--cor-primaria)' }}><Plus size={20} /></button>
+
+            <div className={`space-y-4 flex-1 flex flex-col transition-all duration-300 ${!config.radarAtivo ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Disparar após quantos dias sem vir?</label>
+                <div className="flex items-center gap-3">
+                  <input type="number" value={config.radarDias} onChange={(e) => setConfig({...config, radarDias: Number(e.target.value)})}
+                    className="w-24 border p-3 rounded-xl text-sm font-black outline-none text-center transition-colors" 
+                    style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-primaria)' }} min="1" />
+                  <span className="text-xs font-black uppercase" style={{ color: 'var(--cor-texto-principal)' }}>Dias</span>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2 mt-4">
-                {config.horarios.map(h => (
-                  <div key={h} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-black tracking-wider border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-primaria)', color: 'var(--cor-texto-principal)' }}>
-                    <Clock size={14} style={{ color: 'var(--cor-primaria)' }} /> {h}
-                    <button onClick={() => removerHorario(h)} className="ml-2 text-red-500 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
-                  </div>
-                ))}
+
+              <div className="space-y-2 mt-2 flex-1">
+                <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Resgate</label>
+                <textarea value={config.msgRadar} onChange={(e) => setConfig({...config, msgRadar: e.target.value})}
+                  className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors" 
+                  style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span></p>
               </div>
             </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="flex items-center gap-3 border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
-              <MessageSquare size={20} style={{ color: 'var(--cor-primaria)' }} />
-              <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Textos das Mensagens</h3>
-            </div>
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Lembrete</label>
-                <textarea value={config.msgLembrete} onChange={(e) => setConfig({...config, msgLembrete: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Variáveis: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span></p>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Confirmação</label>
-                <textarea value={config.msgConfirmacao} onChange={(e) => setConfig({...config, msgConfirmacao: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Variáveis: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* CARD 3: RADAR DE CLIENTES SUMIDOS E MARKETING */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* RADAR DE RECUPERAÇÃO */}
-        <div className="border rounded-[2.5rem] p-10 shadow-sm transition-colors flex flex-col" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
-          <div className="flex items-center justify-between mb-6 border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
-            <div className="flex items-center gap-3">
+          {/* CAMPANHAS E DISPAROS */}
+          <div className="border rounded-[2.5rem] p-8 md:p-10 shadow-sm transition-colors flex flex-col flex-1" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
+            <div className="flex items-center gap-3 mb-6 border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
               <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
-                <UserSearch size={20} style={{ color: 'var(--cor-primaria)' }} />
+                <Megaphone size={20} style={{ color: 'var(--cor-primaria)' }} />
               </div>
               <div>
-                <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Radar de Sumidos</h3>
-                <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Recuperação Automática</p>
-              </div>
-            </div>
-            <button onClick={() => setConfig({...config, radarAtivo: !config.radarAtivo})} className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" style={{ backgroundColor: config.radarAtivo ? 'var(--cor-primaria)' : 'var(--cor-borda)' }}>
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.radarAtivo ? 'translate-x-6' : 'translate-x-1'}`} />
-            </button>
-          </div>
-
-          <div className={`space-y-4 flex-1 flex flex-col transition-all duration-300 ${!config.radarAtivo ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
-            <p className="text-xs font-bold mb-2" style={{ color: 'var(--cor-texto-secundario)' }}>
-              O bot buscará clientes que não cortam o cabelo há X dias para tentar recuperá-los.
-            </p>
-            
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Disparar após quantos dias sem vir?</label>
-              <div className="flex items-center gap-3">
-                <input 
-                  type="number" 
-                  value={config.radarDias} 
-                  onChange={(e) => setConfig({...config, radarDias: Number(e.target.value)})}
-                  className="w-24 border p-3 rounded-xl text-sm font-black outline-none text-center transition-colors" 
-                  style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-primaria)' }}
-                  min="1"
-                />
-                <span className="text-xs font-black uppercase" style={{ color: 'var(--cor-texto-principal)' }}>Dias</span>
+                <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Campanhas</h3>
+                <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Disparo em Massa</p>
               </div>
             </div>
 
-            <div className="space-y-2 mt-4 flex-1">
-              <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Resgate</label>
+            <div className="space-y-4 flex-1 flex flex-col">
               <textarea 
-                value={config.msgRadar} 
-                onChange={(e) => setConfig({...config, msgRadar: e.target.value})}
-                className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-28 resize-none transition-colors" 
+                value={mensagemCampanha} 
+                onChange={(e) => setMensagemCampanha(e.target.value)}
+                placeholder="Ex: Fala {nome}! Só hoje na barbearia, qualquer corte tem 20% OFF."
+                className="w-full border p-4 rounded-xl text-xs font-medium outline-none flex-1 min-h-[100px] resize-none transition-colors"
                 style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}
               />
-              <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Variável: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span></p>
+              <div className="flex items-center justify-between gap-4 mt-auto">
+                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>
+                  Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>
+                </p>
+                <button onClick={dispararCampanha} disabled={enviandoCampanha || !mensagemCampanha}
+                  className="text-white px-6 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95"
+                  style={{ backgroundColor: 'var(--cor-primaria)' }}>
+                  {enviandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} 
+                  {enviandoCampanha ? 'Enviando...' : 'Disparar'}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-
-        {/* MARKETING */}
-        <div className="border rounded-[2.5rem] p-10 shadow-sm transition-colors flex flex-col" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
-          <div className="flex items-center gap-3 mb-6 border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
-            <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
-              <Megaphone size={20} style={{ color: 'var(--cor-primaria)' }} />
-            </div>
-            <div>
-              <h3 className="font-black uppercase text-sm tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Campanhas</h3>
-              <p className="text-[9px] font-bold uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Disparo em Massa</p>
-            </div>
-          </div>
-
-          <div className="space-y-4 flex-1 flex flex-col">
-            <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>
-              Sua Mensagem de Promoção/Aviso
-            </label>
-            <textarea 
-              value={mensagemCampanha} 
-              onChange={(e) => setMensagemCampanha(e.target.value)}
-              placeholder="Ex: Fala {nome}! Só hoje na Barbearia Antunes, qualquer corte tem 20% de desconto. Aproveite!"
-              className="w-full border p-4 rounded-xl text-xs font-medium outline-none flex-1 min-h-[120px] resize-none transition-colors"
-              style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}
-            />
-            <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>
-              Variável disponível: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>
-            </p>
-            
-            <button 
-              onClick={dispararCampanha} 
-              disabled={enviandoCampanha || !mensagemCampanha}
-              className="text-white px-8 py-4 rounded-xl w-full font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95 mt-auto"
-              style={{ backgroundColor: 'var(--cor-primaria)' }}
-            >
-              {enviandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} 
-              {enviandoCampanha ? 'Processando Disparo...' : 'Disparar para Todos'}
-            </button>
           </div>
         </div>
       </div>
 
-      {/* CARD 4: ⭐ AVALIAÇÃO PÓS-CORTE (NPS) */}
-      <div className="border rounded-[2.5rem] p-10 shadow-sm transition-colors flex flex-col lg:col-span-2" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
+      {/* CARD 4: ⭐ AVALIAÇÃO PÓS-CORTE (NPS) - Ocupa a largura total na parte de baixo */}
+      <div className="border rounded-[2.5rem] p-8 md:p-10 shadow-sm transition-colors flex flex-col" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
         <div className="flex items-center justify-between mb-6 border-b pb-4" style={{ borderColor: 'var(--cor-borda)' }}>
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
@@ -369,11 +358,11 @@ export default function GerenciadorBot() {
         </div>
 
         <div className={`space-y-4 flex flex-col transition-all duration-300 ${!config.npsAtivo ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
-          <p className="text-xs font-bold mb-2" style={{ color: 'var(--cor-texto-secundario)' }}>
+          <p className="text-xs font-bold mb-4" style={{ color: 'var(--cor-texto-secundario)' }}>
             O bot enviará uma mensagem pedindo a nota do cliente após você clicar em "Concluir" no painel.
           </p>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-8">
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Enviar após quantos minutos?</label>
               <div className="flex items-center gap-3">
@@ -381,7 +370,7 @@ export default function GerenciadorBot() {
                   type="number" 
                   value={config.npsTempoMinutos} 
                   onChange={(e) => setConfig({...config, npsTempoMinutos: Number(e.target.value)})}
-                  className="w-full md:w-24 border p-3 rounded-xl text-sm font-black outline-none text-center transition-colors" 
+                  className="w-full md:w-32 border p-4 rounded-xl text-sm font-black outline-none text-center transition-colors" 
                   style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-primaria)' }}
                   min="1"
                 />
@@ -389,7 +378,7 @@ export default function GerenciadorBot() {
               </div>
             </div>
 
-            <div className="space-y-2 md:col-span-2">
+            <div className="space-y-2 md:col-span-2 xl:col-span-3">
               <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Avaliação</label>
               <textarea 
                 value={config.msgNPS} 

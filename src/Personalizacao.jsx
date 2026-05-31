@@ -133,7 +133,7 @@ export default function Personalizacao() {
       ...prev,
       presetCustomizado: { ...prev.cores }
     }));
-    alert("Cores atuais definidas como seu preset! Não esqueça de 'Salvar Alterações' para gravar no banco.");
+    toast("Cores atuais definidas como seu preset! Não esqueça de 'Salvar Alterações' para gravar no banco.");
   }
 
   const salvarPersonalizacao = async () => {
@@ -142,10 +142,10 @@ export default function Personalizacao() {
       await setDoc(doc(db, "configuracoes", "personalizacao"), tema);
       localStorage.setItem('tema_customizado', JSON.stringify(tema.cores));
       if (tema.favicon) localStorage.setItem('favicon_customizado', tema.favicon);
-      alert("Identidade visual salva com sucesso!");
+      toast.success("Identidade visual salva com sucesso!");
     } catch (e) {
       console.error(e);
-      alert("Erro ao salvar no banco de dados.");
+      toast.error("Erro ao salvar no banco de dados.");
     }
     setSalvando(false);
   }

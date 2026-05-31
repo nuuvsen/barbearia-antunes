@@ -118,7 +118,7 @@ export default function AdminConfiguracoes() {
   }
 
   const adicionarRegraSemana = () => {
-    if (formRegraSemana.semanas.length === 0) return alert("Selecione ao menos uma semana do mês.")
+    if (formRegraSemana.semanas.length === 0) return toast("Selecione ao menos uma semana do mês.")
     setConfigAgenda(prev => ({
       ...prev,
       regrasSemanas: [...(prev.regrasSemanas || []), { ...formRegraSemana, id: Date.now().toString() }]
@@ -134,7 +134,7 @@ export default function AdminConfiguracoes() {
 
   // ---- FUNÇÕES EXCEÇÕES DATA EXATA ----
   const adicionarExcecao = () => {
-    if (!dataNovaExcecao) return alert("Selecione uma data para a exceção.")
+    if (!dataNovaExcecao) return toast("Selecione uma data para a exceção.")
     setConfigAgenda(prev => ({
       ...prev,
       excecoes: { ...prev.excecoes, [dataNovaExcecao]: formExcecao }
@@ -160,9 +160,9 @@ export default function AdminConfiguracoes() {
     try {
       await setDoc(doc(db, "configuracoes", "comissoes"), comissoes)
       await setDoc(doc(db, "configuracoes", "agenda"), configAgenda)
-      alert("Configurações salvas com sucesso!")
+      toast.success("Configurações salvas com sucesso!")
     } catch (e) {
-      alert("Erro ao salvar.")
+      toast.error("Erro ao salvar.")
     }
     setSalvando(false)
   }

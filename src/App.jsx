@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { db } from './firebase'
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore'
+import { Toaster } from 'react-hot-toast';
+import BotMonitor from './BotMonitor';
 
 // Importação dos componentes
 import Cliente from './Cliente'
@@ -100,13 +102,35 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Cliente servicos={servicos} />} />
-        <Route path="/admin" element={<Admin servicos={servicos} aoMudar={carregarDados} />} />
-        <Route path="/barbeiro" element={<PainelBarbeiro />} />
-        <Route path="/superadmin" element={<SuperAdmin />} />
-      </Routes>
-    </BrowserRouter>
+    <>
+      {/* 2. O Toaster injeta os avisos flutuantes em todas as telas do site */}
+      <Toaster 
+        position="top-right" 
+        toastOptions={{
+          style: {
+            background: '#333', // Fundo escuro
+            color: '#fff',      // Texto branco
+            borderRadius: '10px',
+          },
+          success: {
+            iconTheme: {
+              primary: '#16a34a', // Verde
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
+      {/* 3. AQUI ESTÁ O SEU MONITOR FANTASMA! 👇 */}
+      <BotMonitor />
+      
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Cliente servicos={servicos} />} />
+          <Route path="/admin" element={<Admin servicos={servicos} aoMudar={carregarDados} />} />
+          <Route path="/barbeiro" element={<PainelBarbeiro />} />
+          <Route path="/superadmin" element={<SuperAdmin />} />
+        </Routes>
+      </BrowserRouter>
+    </>
   );
 }
