@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, onSnapshot, query, doc, updateDoc, where } from 'firebase/firestore' 
-import { Search, X, Plus, Clock, CalendarDays } from 'lucide-react'
-import toast from 'react-hot-toast' // 👈 Importação do Toast adicionada
+import { collection, onSnapshot, query, doc, updateDoc, where, getDocs, getDoc } from 'firebase/firestore' 
+import { Search, X, Plus, Clock, CalendarDays, DollarSign, Receipt, TrendingUp, TrendingDown } from 'lucide-react'
+import toast from 'react-hot-toast'
 import AdminPagamento from './AdminPagamento'
 import Comanda from './Comanda'
 
@@ -10,72 +10,58 @@ const IconCheck = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" heigh
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
 
 export default function AdminDashboard({ totalServicos }) {
+  // ESTADOS ORIGINAIS
   const [agendamentos, setAgendamentos] = useState([])
   const [mostrarFinalizados, setMostrarFinalizados] = useState(false)
   const [agendamentoEmPagamento, setAgendamentoEmPagamento] = useState(null)
   const [busca, setBusca] = useState('')
   const [configCores, setConfigCores] = useState(null)
-  
   const [configAgenda, setConfigAgenda] = useState(null) 
   const [barbeiros, setBarbeiros] = useState([])
   const [mostrarComanda, setMostrarComanda] = useState(false)
-  
-  // NOVO ESTADO: Data selecionada para a visualização da agenda (inicia hoje)
   const [dataSelecionada, setDataSelecionada] = useState(new Date())
 
-  // 1. BUSCA PERSONALIZAÇÃO (CORES)
+  // NOVOS ESTADOS - VISÃO GERAL DO MÊS
+  const [faturamento, setFaturamento] = useState(0);
+  const [ticketMedio, setTicketMedio] = useState(0);
+  const [lucroReal, setLucroReal] = useState(0); 
+  const [totalDespesas, setTotalDespesas] = useState(0); 
+  const [servicosRanking, setServicosRanking] = useState([]);
+  const [carregandoMetricas, setCarregandoMetricas] = useState(true);
+
+  // 1. CARREGAR AGENDAMENTOS
   useEffect(() => {
-    const unsubCores = onSnapshot(doc(db, "configuracoes", "personalizacao"), (docSnap) => {
-      if (docSnap.exists()) setConfigCores(docSnap.data().cores);
-    });
-    return () => unsubCores();
-  }, []);
-
-  // 2. BUSCA CONFIGURAÇÕES DE HORÁRIOS
-  useEffect(() => {
-    const unsubAgenda = onSnapshot(doc(db, "configuracoes", "agenda"), (docSnap) => {
-      if (docSnap.exists()) setConfigAgenda(docSnap.data());
-    });
-    return () => unsubAgenda();
-  }, []);
-
-  // =========================================================================
-  // 3. BUSCA AGENDAMENTOS EM TEMPO REAL (OTIMIZADO E COM FUSO HORÁRIO CORRETO)
-  // =========================================================================
-  useEffect(() => {
-    // Função para pegar a data no formato YYYY-MM-DD exato da máquina local (Brasil)
-    const getLocalISO = (d) => {
-      const ano = d.getFullYear();
-      const mes = String(d.getMonth() + 1).padStart(2, '0');
-      const dia = String(d.getDate()).padStart(2, '0');
-      return `${ano}-${mes}-${dia}`;
-    };
-
-    const hoje = new Date();
-    
-    // Calcula 7 dias atrás
-    const dataInicio = new Date(hoje);
-    dataInicio.setDate(hoje.getDate() - 7); 
-    const inicioStr = getLocalISO(dataInicio); 
-
-    // Calcula 15 dias para frente
-    const dataFim = new Date(hoje);
-    dataFim.setDate(hoje.getDate() + 15); 
-    const fimStr = getLocalISO(dataFim); 
-
-    // Monta a Query limitando a busca ao período acima
-    const q = query(
-      collection(db, "agendamentos"),
-      where("data", ">=", inicioStr),
-      where("data", "<=", fimStr)
-    );
-    
-    // Executa a busca
+    const q = query(collection(db, "agendamentos"))
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setAgendamentos(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+      const ags = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+      setAgendamentos(ags)
+    })
+    return () => unsubscribe()
+  }, [])
 
-    return () => unsubscribe();
+  // 2. BUSCA CORES
+  useEffect(() => {
+    const qCores = query(collection(db, "configuracoes"))
+    const unsub = onSnapshot(qCores, (snapshot) => {
+      snapshot.forEach(doc => {
+        if (doc.id === 'personalizacao') {
+          setConfigCores(doc.data().cores)
+        }
+      })
+    })
+    return () => unsub()
+  }, [])
+
+  // 3. BUSCA AGENDA
+  useEffect(() => {
+    const getAgenda = async () => {
+      const docRef = doc(db, "configuracoes", "agenda");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setConfigAgenda(docSnap.data());
+      }
+    };
+    getAgenda();
   }, []);
 
   // 4. BUSCA BARBEIROS
@@ -88,14 +74,96 @@ export default function AdminDashboard({ totalServicos }) {
   }, []);
 
   // =========================================================================
-  // FUNÇÕES DE AÇÃO COM TOAST NOTIFICATIONS ADICIONADOS
+  // 5. BUSCA DADOS DE FATURAMENTO E DESPESAS DO MÊS ATUAL
+  // =========================================================================
+  useEffect(() => {
+    const buscarDadosDoMes = async () => {
+      try {
+        const dataAtual = new Date();
+        const mesAtual = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
+
+        // 1. Busca TODAS as comandas do mês
+        const qComandas = query(collection(db, "comandas"), where("mesReferencia", "==", mesAtual));
+        const snapshotComandas = await getDocs(qComandas);
+        
+        const comandas = [];
+        let somaLucroBarbearia = 0; 
+
+        snapshotComandas.forEach((doc) => {
+          const dados = doc.data();
+          comandas.push(dados);
+          somaLucroBarbearia += Number(dados.lucroBarbearia || 0); 
+        });
+
+        // 2. Busca TODAS as despesas do mês
+        const qDespesas = query(collection(db, "despesas"), where("mesReferencia", "==", mesAtual));
+        const snapshotDespesas = await getDocs(qDespesas);
+        
+        let somaDespesas = 0;
+        snapshotDespesas.forEach((doc) => {
+          somaDespesas += Number(doc.data().valor || 0);
+        });
+
+        setTotalDespesas(somaDespesas);
+        setLucroReal(somaLucroBarbearia - somaDespesas); 
+
+        calcularMetricas(comandas);
+      } catch (error) {
+        console.error("Erro ao buscar dados do dashboard:", error);
+      } finally {
+        setCarregandoMetricas(false);
+      }
+    };
+
+    buscarDadosDoMes();
+  }, [agendamentos]);
+
+  const calcularMetricas = (comandas) => {
+    // 1. Faturamento e Ticket Médio
+    const totalFaturado = comandas.reduce((acumulador, comanda) => acumulador + (comanda.valorTotal || 0), 0);
+    const totalComandas = comandas.length;
+    const ticket = totalComandas > 0 ? (totalFaturado / totalComandas) : 0;
+
+    setFaturamento(totalFaturado);
+    setTicketMedio(ticket);
+
+    // 2. Serviços Mais Procurados (Ranking)
+    const contagemServicos = {};
+    
+    comandas.forEach(comanda => {
+      if (comanda.servicos && Array.isArray(comanda.servicos)) {
+        comanda.servicos.forEach(servico => {
+          contagemServicos[servico] = (contagemServicos[servico] || 0) + 1;
+        });
+      }
+    });
+
+    const ranking = Object.entries(contagemServicos)
+      .map(([nome, quantidade]) => ({ nome, quantidade }))
+      .sort((a, b) => b.quantidade - a.quantidade);
+
+    setServicosRanking(ranking);
+  };
+
+  // =========================================================================
+  // FUNÇÕES DE AÇÃO 
   // =========================================================================
   const concluirAtendimentoFinal = async (id) => {
     try {
-      // 1. Salva a conclusão no banco de dados
-      await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
+      if (!id) {
+        toast.error("Erro: ID do atendimento não encontrado.");
+        return;
+      }
+
+      // 1. Verifica de onde veio o pagamento
+      if (agendamentoEmPagamento?.origem === 'comanda') {
+        // Se veio direto da Nova Comanda, atualiza na coleção de comandas
+        await updateDoc(doc(db, "comandas", id), { status: "Concluído" });
+      } else {
+        // Se veio da Fila de Agendamentos, atualiza na coleção de agendamentos
+        await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
+      }
       
-      // 👈 Toast de Sucesso para o fechamento da comanda
       toast.success("Atendimento concluído com sucesso!"); 
       
       // 2. Aciona o Bot para enviar o NPS em 30 minutos
@@ -112,16 +180,14 @@ export default function AdminDashboard({ totalServicos }) {
           });
         } catch (errorBot) {
           console.error("Erro ao acionar o bot de NPS:", errorBot);
-          // 👈 Toast de Aviso se o Bot estiver offline
           toast("Atendimento salvo, mas o envio de NPS falhou.", { icon: '⚠️' }); 
         }
       }
 
-      // 3. Limpa o estado da tela
+      // 3. Limpa o estado e fecha a tela de pagamento
       setAgendamentoEmPagamento(null);
     } catch (error) {
       console.error("Erro ao concluir:", error);
-      // 👈 Toast de Erro Crítico
       toast.error("Erro ao concluir o atendimento no sistema.");
     }
   }
@@ -130,7 +196,6 @@ export default function AdminDashboard({ totalServicos }) {
     if (window.confirm("Deseja marcar este agendamento como Cancelado?")) {
       try {
         await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
-        // 👈 Toast informando cancelamento concluído
         toast.success("Agendamento marcado como cancelado!");
       } catch (error) {
         console.error("Erro ao cancelar:", error);
@@ -141,15 +206,11 @@ export default function AdminDashboard({ totalServicos }) {
 
   const formatarWhatsApp = (numero) => `https://wa.me/55${numero.replace(/\D/g, '')}`
 
-  // FUNÇÕES DE DATA PARA A NAVEGAÇÃO
   const getFormatosData = (dataBase) => {
     const ano = dataBase.getFullYear();
     const mes = String(dataBase.getMonth() + 1).padStart(2, '0');
     const dia = String(dataBase.getDate()).padStart(2, '0');
-    return {
-      iso: `${ano}-${mes}-${dia}`,
-      br: `${dia}/${mes}/${ano}`
-    }
+    return { iso: `${ano}-${mes}-${dia}`, br: `${dia}/${mes}/${ano}` }
   }
 
   const gerarProximosDias = () => {
@@ -163,22 +224,17 @@ export default function AdminDashboard({ totalServicos }) {
   const diasSemana = gerarProximosDias();
   const nomesDiasCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-  // FUNÇÃO QUE GERA A GRADE BASEADA NA DATA SELECIONADA
   const gerarGradeDaData = (dataAlvo) => {
     if (!configAgenda || !configAgenda.horariosPorDia) return []; 
 
     const diaNum = dataAlvo.getDay(); 
     const formatoISO = getFormatosData(dataAlvo).iso;
-
-    // 1. Descobre qual é o número da semana no mês (ex: 1, 2, 3, 4 ou 5)
     const ocorrenciaSemana = Math.ceil(dataAlvo.getDate() / 7);
 
-    // 2. Busca se existe uma regra dinâmica cadastrada para essa semana e dia
     const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
         r.diaSemana === diaNum && r.semanas.includes(ocorrenciaSemana)
     );
 
-    // 3. Aplica a hierarquia (Exceção Data Exata > Regra Dinâmica > Regra Padrão do dia)
     const regraDoDia = configAgenda.excecoes?.[formatoISO] || regraSemanaDinamica || configAgenda.horariosPorDia[diaNum];
 
     if (!regraDoDia || !regraDoDia.ativo) return []; 
@@ -188,10 +244,8 @@ export default function AdminDashboard({ totalServicos }) {
 
     const calcularTurno = (horaInicio, horaFim) => {
       if (!horaInicio || !horaFim) return;
-      
       let [hAtual, mAtual] = horaInicio.split(':').map(Number);
       let [hFinal, mFinal] = horaFim.split(':').map(Number);
-      
       let atual = (hAtual * 60) + mAtual;
       const totalFim = (hFinal * 60) + mFinal;
 
@@ -285,19 +339,77 @@ export default function AdminDashboard({ totalServicos }) {
           </button>
         </div>
       </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-         <div className="p-6 rounded-2xl border" 
-              style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
-            <p className="text-xs uppercase font-black mb-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Total Visível</p>
-            <p className="text-4xl font-black" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{proximosClientes.length}</p>
-         </div>
-         <div className="p-6 rounded-2xl border" 
-              style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
-            <p className="text-xs uppercase font-black mb-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Serviços Cadastrados</p>
-            <p className="text-4xl font-black" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{totalServicos}</p>
-         </div>
+
+      {/* ========================================================= */}
+      {/* NOVA SEÇÃO: VISÃO GERAL DO MÊS */}
+      {/* ========================================================= */}
+      <div className="mb-10">
+        <h2 className="text-xl font-bold uppercase tracking-widest flex items-center gap-2 mb-4" 
+            style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+          <TrendingUp size={20} /> Visão Geral do Mês
+        </h2>
+
+        {carregandoMetricas ? (
+          <p className="text-sm font-bold opacity-50" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>Calculando métricas...</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            
+            <div className="p-6 rounded-2xl border flex flex-col justify-between" 
+                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+              <div className="flex justify-between items-start mb-2">
+                <p className="text-[10px] uppercase font-black opacity-50" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Faturamento Bruto</p>
+                <DollarSign size={18} className="text-blue-500" />
+              </div>
+              <h2 className="text-3xl font-black text-blue-500 truncate">
+                R$ {faturamento.toFixed(2).replace('.', ',')}
+              </h2>
+            </div>
+
+            <div className="p-6 rounded-2xl border flex flex-col justify-between" 
+                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+              <div className="flex justify-between items-start mb-2">
+                <p className="text-[10px] uppercase font-black opacity-50" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Despesas no Mês</p>
+                <TrendingDown size={18} className="text-red-500" />
+              </div>
+              <h2 className="text-3xl font-black text-red-500 truncate">
+                R$ {totalDespesas.toFixed(2).replace('.', ',')}
+              </h2>
+            </div>
+
+            <div className="p-6 rounded-2xl border flex flex-col justify-between relative overflow-hidden" 
+                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+              <div className="flex justify-between items-start mb-2 z-10">
+                <p className="text-[10px] uppercase font-black opacity-50" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Lucro Líquido Real</p>
+                <Receipt size={18} className="text-green-500" />
+              </div>
+              <h2 className="text-3xl font-black text-green-500 truncate z-10">
+                R$ {lucroReal.toFixed(2).replace('.', ',')}
+              </h2>
+              {/* Avisinho se o lucro estiver negativo */}
+              {lucroReal < 0 && <span className="absolute bottom-2 right-4 text-[8px] font-black text-red-500 uppercase z-10">Prejuízo</span>}
+            </div>
+
+            <div className="p-5 rounded-2xl border overflow-hidden flex flex-col" 
+                 style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+              <p className="text-[10px] uppercase font-black opacity-50 mb-3" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>Top Serviços do Mês</p>
+              {servicosRanking.length === 0 ? (
+                <p className="text-xs font-bold opacity-50 flex-1 flex items-center" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>Sem dados registrados.</p>
+              ) : (
+                <div className="space-y-2 flex-1 overflow-y-auto custom-scrollbar pr-1">
+                  {servicosRanking.slice(0, 3).map((servico, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-xs">
+                      <span className="font-bold truncate pr-2" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>{idx + 1}. {servico.nome}</span>
+                      <span className="text-[9px] px-2 py-0.5 rounded font-black" style={{ backgroundColor: 'rgba(128,128,128,0.1)', color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{servico.quantidade}x</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
       </div>
+      {/* ========================================================= */}
 
       <div className="flex items-center justify-between mt-12 mb-4">
         <h2 className="text-xl font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
@@ -335,14 +447,12 @@ export default function AdminDashboard({ totalServicos }) {
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {barbeiros.map(b => {
-          // Filtra os agendamentos específicos do barbeiro na data selecionada
           const agendamentosBarbeiro = proximosClientes.filter(ag => 
             ag.barbeiro === b.nome && 
             ag.status !== 'Cancelado' &&
             (ag.data === formatosSel.br || ag.data === formatosSel.iso)
           );
 
-          // Oculta horários livres que já passaram (SOMENTE SE A DATA SELECIONADA FOR HOJE)
           const horariosFiltrados = horariosDaData.filter(hora => {
             const ocupado = agendamentosBarbeiro.find(ag => ag.hora === hora);
             if (ocupado) return true; 
@@ -353,7 +463,7 @@ export default function AdminDashboard({ totalServicos }) {
               return minutosSlot >= minutosAtuais; 
             }
 
-            return true; // Se for um dia futuro, mostra tudo
+            return true; 
           });
 
           return (

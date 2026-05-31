@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { db } from './firebase' // Removido o storage daqui
+import { db } from './firebase' 
 import { 
   collection, addDoc, deleteDoc, 
   doc, updateDoc, onSnapshot, serverTimestamp 
@@ -7,7 +7,7 @@ import {
 import { 
   Plus, X, Package, Search, 
   Trash2, Edit3, Layers, BarChart3, 
-  Minus, ArrowDownUp, AlertCircle, UploadCloud
+  Minus, ArrowDownUp, AlertCircle, UploadCloud, AlertTriangle 
 } from 'lucide-react'
 
 export default function AdminProdutos() {
@@ -25,8 +25,9 @@ export default function AdminProdutos() {
   const [arquivoImagem, setArquivoImagem] = useState(null)
   const [previewLocal, setPreviewLocal] = useState(null)
   
+  // Atualizado com "estoqueMinimo"
   const formInicial = { 
-    id: null, nome: '', preco: '', estoque: '', categoria: '', foto: '' 
+    id: null, nome: '', preco: '', estoque: '', estoqueMinimo: 3, categoria: '', foto: '' 
   }
   const [form, setForm] = useState(formInicial)
 
@@ -59,7 +60,10 @@ export default function AdminProdutos() {
   }
 
   const prepararEdicao = (p) => {
-    setForm(p)
+    setForm({
+      ...p,
+      estoqueMinimo: p.estoqueMinimo || 3 // Garante que produtos antigos tenham um valor base
+    })
     setPreviewLocal(p.foto || null) 
     setArquivoImagem(null)
     setIsModalOpen(true)
@@ -82,7 +86,6 @@ export default function AdminProdutos() {
 
       // LÓGICA DO IMGBB
       if (arquivoImagem) {
-        // MUDE ESTA LINHA: COLE SUA CHAVE DE API AQUI ENTRE AS ASPAS SIMPLES
         const IMGBB_API_KEY = 'f172041aaa9358b02a0ed5e94e90960b'; 
         
         const formData = new FormData();
@@ -96,7 +99,7 @@ export default function AdminProdutos() {
         const dadosRetorno = await respostaImgbb.json();
 
         if (dadosRetorno.success) {
-          urlFinalFoto = dadosRetorno.data.url; // Pega o link definitivo da imagem
+          urlFinalFoto = dadosRetorno.data.url;
         } else {
           throw new Error("Falha ao fazer upload da imagem no servidor.");
         }
@@ -104,11 +107,15 @@ export default function AdminProdutos() {
 
       const { id, foto, ...restoForm } = form; 
       
+      // Ajuste para aceitar vírgula ou ponto no preço
+      const precoFormatado = String(form.preco).replace(',', '.');
+
       const dados = {
         ...restoForm,
         foto: urlFinalFoto,
-        preco: parseFloat(form.preco || 0),
+        preco: parseFloat(precoFormatado || 0),
         estoque: parseInt(form.estoque || 0),
+        estoqueMinimo: parseInt(form.estoqueMinimo || 3),
         atualizadoEm: serverTimestamp()
       }
 
@@ -343,78 +350,93 @@ export default function AdminProdutos() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {produtosExibicao.map(p => (
-            <div key={p.id} className="group p-5 rounded-[2.5rem] border transition-all hover:scale-[1.02] shadow-sm flex flex-col relative"
-                 style={{ backgroundColor: configCores?.card || '#FFF', borderColor: configCores?.borda }}>
-              
-              {/* STATUS BADGES */}
-              {p.estoque === 0 && (
-                <div className="absolute top-6 right-6 z-10 bg-red-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-full tracking-widest flex items-center gap-1 shadow-lg shadow-red-500/30">
-                  <AlertCircle size={10} /> Esgotado
-                </div>
-              )}
-              {p.estoque > 0 && p.estoque <= 5 && (
-                <div className="absolute top-6 right-6 z-10 bg-yellow-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-full tracking-widest flex items-center gap-1 shadow-lg shadow-yellow-500/30">
-                  <AlertCircle size={10} /> Baixo Estoque
-                </div>
-              )}
+          {produtosExibicao.map(p => {
+            
+            // Lógica de Alertas Dinâmicos baseados no form do segundo código
+            const minimoIdeal = p.estoqueMinimo || 3;
+            const estoqueBaixo = p.estoque > 0 && p.estoque <= minimoIdeal;
+            const esgotado = p.estoque === 0;
 
-              <div className="aspect-square mb-5 overflow-hidden rounded-[2rem] relative" style={{ backgroundColor: configCores?.fundo || '#f3f4f6' }}>
-                {p.foto ? (
-                  <img src={p.foto} alt={p.nome} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center opacity-20" style={{ color: configCores?.texto }}><Package size={48}/></div>
-                )}
-              </div>
-
-              <div className="flex-1">
-                <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md mb-2 inline-block" style={{ color: configCores?.primaria, backgroundColor: configCores?.fundo || '#f3f4f6' }}>
-                  {p.categoria || 'Sem Categoria'}
-                </span>
-                <h3 className="font-black text-lg uppercase tracking-tighter leading-tight mb-1" style={{ color: configCores?.texto }}>{p.nome}</h3>
-                <p className="text-2xl font-black italic tracking-tighter mb-4" style={{ color: configCores?.primaria }}>R$ {Number(p.preco || 0).toFixed(2)}</p>
+            return (
+              <div key={p.id} className="group p-5 rounded-[2.5rem] border transition-all hover:scale-[1.02] shadow-sm flex flex-col relative overflow-hidden"
+                  style={{ 
+                    backgroundColor: esgotado ? '#fef2f2' : estoqueBaixo ? '#fffbeb' : (configCores?.card || '#FFF'), 
+                    borderColor: esgotado ? '#fca5a5' : estoqueBaixo ? '#fde047' : configCores?.borda 
+                  }}>
                 
-                {/* CONTROLE RÁPIDO DE ESTOQUE */}
-                <div className="flex items-center justify-between p-2 rounded-2xl border" style={{ borderColor: configCores?.borda, backgroundColor: configCores?.fundo || '#f3f4f6' }}>
-                  <button 
-                    onClick={() => ajustarEstoque(p, -1)}
-                    disabled={p.estoque === 0}
-                    className="w-8 h-8 rounded-xl flex items-center justify-center bg-white border shadow-sm hover:bg-gray-50 active:scale-95 disabled:opacity-30 disabled:active:scale-100 transition-all text-gray-700"
-                  >
-                    <Minus size={14} strokeWidth={3} />
-                  </button>
-                  <div className="text-center">
-                    <span className="block text-sm font-black" style={{ color: configCores?.texto }}>{p.estoque}</span>
-                    <span className="block text-[8px] uppercase font-bold tracking-widest opacity-50" style={{ color: configCores?.texto }}>Em Estoque</span>
+                {/* STATUS BADGES */}
+                {esgotado && (
+                  <div className="absolute top-6 right-6 z-10 bg-red-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-full tracking-widest flex items-center gap-1 shadow-lg shadow-red-500/30">
+                    <AlertTriangle size={10} /> Esgotado
                   </div>
+                )}
+                {estoqueBaixo && (
+                  <div className="absolute top-6 right-6 z-10 bg-yellow-500 text-white text-[8px] font-black uppercase px-3 py-1 rounded-full tracking-widest flex items-center gap-1 shadow-lg shadow-yellow-500/30">
+                    <AlertCircle size={10} /> Baixo Estoque
+                  </div>
+                )}
+
+                <div className="aspect-square mb-5 overflow-hidden rounded-[2rem] relative" style={{ backgroundColor: configCores?.fundo || '#f3f4f6' }}>
+                  {p.foto ? (
+                    <img src={p.foto} alt={p.nome} className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 ${esgotado ? 'grayscale' : ''}`} />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center opacity-20" style={{ color: configCores?.texto }}><Package size={48}/></div>
+                  )}
+                </div>
+
+                <div className="flex-1">
+                  <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md mb-2 inline-block" style={{ color: configCores?.primaria, backgroundColor: configCores?.fundo || '#f3f4f6' }}>
+                    {p.categoria || 'Sem Categoria'}
+                  </span>
+                  <h3 className="font-black text-lg uppercase tracking-tighter leading-tight mb-1" style={{ color: esgotado ? '#991b1b' : configCores?.texto }}>{p.nome}</h3>
+                  <p className="text-2xl font-black italic tracking-tighter mb-4" style={{ color: configCores?.primaria }}>R$ {Number(p.preco || 0).toFixed(2)}</p>
+                  
+                  {/* CONTROLE RÁPIDO DE ESTOQUE */}
+                  <div className="flex items-center justify-between p-2 rounded-2xl border" style={{ borderColor: configCores?.borda, backgroundColor: esgotado ? '#fee2e2' : (configCores?.fundo || '#f3f4f6') }}>
+                    <button 
+                      onClick={() => ajustarEstoque(p, -1)}
+                      disabled={p.estoque === 0}
+                      className="w-8 h-8 rounded-xl flex items-center justify-center bg-white border shadow-sm hover:bg-gray-50 active:scale-95 disabled:opacity-30 disabled:active:scale-100 transition-all text-gray-700"
+                    >
+                      <Minus size={14} strokeWidth={3} />
+                    </button>
+                    <div className="text-center">
+                      <span className={`block text-sm font-black ${esgotado ? 'text-red-600' : ''}`} style={{ color: !esgotado ? configCores?.texto : undefined }}>{p.estoque}</span>
+                      <span className="block text-[8px] uppercase font-bold tracking-widest opacity-50 mb-0.5" style={{ color: configCores?.texto }}>Em Estoque</span>
+                      {/* Indicador visual de quantidade mínima embutido */}
+                      <span className="block text-[7px] uppercase font-black tracking-widest text-red-500/80">
+                        Mínimo: {minimoIdeal}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => ajustarEstoque(p, 1)}
+                      className="w-8 h-8 rounded-xl flex items-center justify-center bg-white border shadow-sm hover:bg-gray-50 active:scale-95 transition-all text-gray-700"
+                    >
+                      <Plus size={14} strokeWidth={3} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 mt-4 pt-4 border-t border-dashed" style={{ borderColor: configCores?.borda }}>
                   <button 
-                    onClick={() => ajustarEstoque(p, 1)}
-                    className="w-8 h-8 rounded-xl flex items-center justify-center bg-white border shadow-sm hover:bg-gray-50 active:scale-95 transition-all text-gray-700"
+                    onClick={() => prepararEdicao(p)} 
+                    className="flex-1 py-3 rounded-xl flex justify-center items-center hover:opacity-70 transition-all"
+                    style={{ backgroundColor: configCores?.fundo || '#f3f4f6', color: configCores?.texto }}
+                    title="Editar informações completas"
                   >
-                    <Plus size={14} strokeWidth={3} />
+                    <Edit3 size={16}/>
+                  </button>
+                  <button 
+                    onClick={() => excluirProduto(p.id)} 
+                    className="flex-1 py-3 rounded-xl flex justify-center items-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                    title="Excluir produto do sistema"
+                  >
+                    <Trash2 size={16}/>
                   </button>
                 </div>
               </div>
-
-              <div className="flex gap-2 mt-4 pt-4 border-t border-dashed" style={{ borderColor: configCores?.borda }}>
-                <button 
-                  onClick={() => prepararEdicao(p)} 
-                  className="flex-1 py-3 rounded-xl flex justify-center items-center hover:opacity-70 transition-all"
-                  style={{ backgroundColor: configCores?.fundo || '#f3f4f6', color: configCores?.texto }}
-                  title="Editar informações completas"
-                >
-                  <Edit3 size={16}/>
-                </button>
-                <button 
-                  onClick={() => excluirProduto(p.id)} 
-                  className="flex-1 py-3 rounded-xl flex justify-center items-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all"
-                  title="Excluir produto do sistema"
-                >
-                  <Trash2 size={16}/>
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -464,14 +486,18 @@ export default function AdminProdutos() {
                 <input required value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-sm font-bold uppercase" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda, color: configCores?.texto }} />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <label className="text-[11px] font-bold uppercase italic ml-2" style={{ color: configCores?.primaria }}>Preço (R$)</label>
-                  <input required type="number" step="0.01" value={form.preco} onChange={e => setForm({...form, preco: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-sm font-bold" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda, color: configCores?.texto }} />
+                  <input required type="text" value={form.preco} onChange={e => setForm({...form, preco: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-sm font-bold" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda, color: configCores?.texto }} />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[11px] font-bold uppercase italic ml-2" style={{ color: configCores?.primaria }}>Qtd Estoque</label>
+                  <label className="text-[11px] font-bold uppercase italic ml-2" style={{ color: configCores?.primaria }}>Qtd Atual</label>
                   <input required type="number" min="0" value={form.estoque} onChange={e => setForm({...form, estoque: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-sm font-bold" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda, color: configCores?.texto }} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold uppercase italic ml-2 text-red-500">Mínimo</label>
+                  <input required type="number" min="0" value={form.estoqueMinimo} onChange={e => setForm({...form, estoqueMinimo: e.target.value})} className="w-full p-4 rounded-2xl border outline-none text-sm font-bold text-red-500 focus:brightness-95 transition-all" style={{ backgroundColor: configCores?.fundo, borderColor: configCores?.borda }} />
                 </div>
               </div>
 

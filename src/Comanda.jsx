@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, updateDoc, doc, increment } from 'firebase/firestore';
 import { X, Plus, Trash2, ShoppingBag, Scissors, User } from 'lucide-react';
 
 export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
@@ -47,8 +47,7 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
     return acc + (Number(valorItem) || 0);
   }, 0);
 
-  const handleFinalizarComanda = () => {
-    // Validação básica
+  const handleFinalizarComanda = async () => {
     if (!clienteNome.trim()) {
       alert("Por favor, digite o nome do cliente.");
       return;
@@ -63,22 +62,92 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
     }
 
     try {
-      // Prepara o objeto garantindo que campos de texto não sejam undefined
-      // e o preço seja enviado como String caso o AdminPagamento tente usar .replace()
-      const dadosPagamento = {
-        clienteNome: clienteNome,
-        barbeiro: barbeiroSelecionado,
-        servico: itensSelecionados.filter(i => i.tipo === 'servico').map(i => i.nome).join(', ') || 'Nenhum',
-        produtos: itensSelecionados.filter(i => i.tipo === 'produto').map(i => i.nome).join(', ') || 'Nenhum',
-        valorTotal: totalGeral, // Mantém o número para cálculos
-        preco: totalGeral.toFixed(2).replace('.', ','), // Envia formatado para evitar erro de .replace no próximo componente
-        data: new Date().toLocaleDateString('pt-BR'),
-        hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        status: 'Pendente'
+      const dataAtual = new Date();
+      const mesReferencia = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
+
+      const listaServicos = itensSelecionados.filter(i => i.tipo === 'servico').map(i => i.nome);
+      const listaProdutos = itensSelecionados.filter(i => i.tipo === 'produto').map(i => i.nome);
+
+      // --- INÍCIO DO CÁLCULO DE COMISSÕES ---
+      
+      // 1. Encontra as taxas do barbeiro que fez o atendimento
+      const dadosBarbeiro = barbeiros.find(b => b.nome === barbeiroSelecionado);
+      
+      // Converte a porcentagem em decimal (ex: 50% vira 0.50). Se não achar, usa um padrão.
+      const taxaServico = (dadosBarbeiro?.comissaoServico || 50) / 100; 
+      const taxaProduto = (dadosBarbeiro?.comissaoProduto || 15) / 100;
+
+      // 2. Soma o total gerado SÓ de serviços e SÓ de produtos
+      const extrairNumero = (valor) => {
+        if (typeof valor === 'number') return valor;
+        return Number(valor.toString().replace(',', '.').replace(/[^0-9.-]+/g, '')) || 0;
       };
 
-      // Chama a função passada por prop
-      onAbrirPagamento(dadosPagamento);
+      const somaServicos = itensSelecionados
+        .filter(i => i.tipo === 'servico')
+        .reduce((acc, item) => acc + extrairNumero(item.preco), 0);
+
+      const somaProdutos = itensSelecionados
+        .filter(i => i.tipo === 'produto')
+        .reduce((acc, item) => acc + extrairNumero(item.preco), 0);
+
+      // 3. Aplica a matemática
+      const valorComissaoServicos = somaServicos * taxaServico;
+      const valorComissaoProdutos = somaProdutos * taxaProduto;
+      
+      const comissaoTotalBarbeiro = valorComissaoServicos + valorComissaoProdutos;
+      const lucroLiquidoBarbearia = totalGeral - comissaoTotalBarbeiro;
+
+      // --- FIM DO CÁLCULO DE COMISSÕES ---
+
+      const novaComanda = {
+        clienteNome: clienteNome,
+        barbeiro: barbeiroSelecionado,
+        servico: listaServicos.join(', ') || 'Nenhum',
+        produtosString: listaProdutos.join(', ') || 'Nenhum',
+        valorTotal: totalGeral, 
+        preco: totalGeral.toFixed(2).replace('.', ','), 
+        
+        comissaoBarbeiro: comissaoTotalBarbeiro,
+        lucroBarbearia: lucroLiquidoBarbearia,
+        detalhesComissao: {
+          taxaServicoAplicada: dadosBarbeiro?.comissaoServico || 50,
+          taxaProdutoAplicada: dadosBarbeiro?.comissaoProduto || 15,
+          ganhoEmServicos: valorComissaoServicos,
+          ganhoEmProdutos: valorComissaoProdutos
+        },
+
+        data: dataAtual.toLocaleDateString('pt-BR'),
+        hora: dataAtual.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        status: 'Pendente',
+        servicos: listaServicos,
+        produtos: listaProdutos,
+        mesReferencia: mesReferencia,
+        dataCriacao: dataAtual.toISOString(),
+      };
+
+      // 1. Salva a Comanda no banco e CAPTURA O ID (docRef)
+      const docRef = await addDoc(collection(db, "comandas"), novaComanda);
+
+      // 2. BAIXA AUTOMÁTICA DE ESTOQUE
+      const produtosVendidos = itensSelecionados.filter(item => item.tipo === 'produto');
+      for (const produto of produtosVendidos) {
+        if (produto.id) {
+          const produtoRef = doc(db, "produtos", produto.id);
+          // O increment(-1) subtrai 1 da quantidade atual no banco de dados com segurança
+          await updateDoc(produtoRef, {
+            quantidadeAtual: increment(-1)
+          });
+        }
+      }
+
+      // 3. Chama a tela de pagamento PASSANDO O ID e a origem
+      onAbrirPagamento({ 
+        id: docRef.id, 
+        origem: 'comanda', // <-- Avisa o painel de onde veio
+        ...novaComanda 
+      });
+
     } catch (error) {
       console.error("Erro ao processar comanda:", error);
       alert("Ocorreu um erro ao avançar para o pagamento.");
@@ -86,7 +155,6 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
   };
 
   return (
-    // Aqui foi adicionado o zoom-in-95 para a animação de entrada suave
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in zoom-in-95 duration-300">
       <div className="w-full max-w-4xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[600px]"
            style={{ backgroundColor: configCores?.fundo || '#ffffff' }}>
