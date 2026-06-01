@@ -49,15 +49,15 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
 
   const handleFinalizarComanda = async () => {
     if (!clienteNome.trim()) {
-      alert("Por favor, digite o nome do cliente.");
+      toast("Por favor, digite o nome do cliente.");
       return;
     }
     if (!barbeiroSelecionado) {
-      alert("Por favor, selecione um barbeiro.");
+      toast("Por favor, selecione um barbeiro.");
       return;
     }
     if (itensSelecionados.length === 0) {
-      alert("Adicione pelo menos um serviço ou produto.");
+      toast("Adicione pelo menos um serviço ou produto.");
       return;
     }
 
@@ -140,7 +140,7 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
 
     } catch (error) {
       console.error("Erro ao processar comanda:", error);
-      alert("Ocorreu um erro ao avançar para o pagamento.");
+      toast.error("Ocorreu um erro ao avançar para o pagamento.");
     }
   };
 

@@ -2,21 +2,34 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, limit, setDoc } from 'firebase/firestore'
 import { Info } from 'lucide-react'
+import Swal from 'sweetalert2'
 
 const MAPA_DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 const NOMES_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
+// Utilitário de Toast do SweetAlert2 (substituindo possíveis bibliotecas faltantes)
+const Toast = Swal.mixin({
+  toast: true,
+  position: "top-end",
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true,
+});
+
 const FotoPadrao = () => (
-  <div className="w-14 h-14 bg-[#111111] flex items-center justify-center rounded-full border-2 border-red-600/30">
-    <svg viewBox="0 0 100 100" className="w-8 h-8 fill-none stroke-red-600" strokeWidth="3">
+  <div className="w-14 h-14 bg-[var(--cor-bg-geral)] flex items-center justify-center rounded-full border-2 border-[var(--cor-primaria)] opacity-70">
+    <svg viewBox="0 0 100 100" className="w-8 h-8 fill-none stroke-[var(--cor-primaria)]" strokeWidth="3">
       <path d="M70 20 L30 60 L20 50 L60 10 Z" fill="currentColor" opacity="0.2" />
       <path d="M30 60 L75 15" strokeLinecap="round" />
-      <text x="50%" y="65%" textAnchor="middle" className="fill-red-600 font-black italic tracking-tighter" fontSize="30">A</text>
+      <text x="50%" y="65%" textAnchor="middle" className="fill-[var(--cor-primaria)] font-black italic tracking-tighter" fontSize="30">A</text>
     </svg>
   </div>
 )
 
 export default function Cliente({ servicos }) {
+  // ESTADO DE TEMA CLARO/ESCURO
+  const [isDark, setIsDark] = useState(true)
+
   const [modo, setModo] = useState('agendamento') 
   const [etapa, setEtapa] = useState(1)
   const [escolha, setEscolha] = useState({ servico: null, barbeiro: null, data: null, hora: null })
@@ -66,7 +79,6 @@ export default function Cliente({ servicos }) {
         regrasSemanas: []
       }
       
-      // Previne quebra caso banco antigo não tenha as chaves novas
       if (!cfg.excecoes) cfg.excecoes = {}
       if (!cfg.regrasSemanas) cfg.regrasSemanas = []
       
@@ -132,18 +144,13 @@ export default function Cliente({ servicos }) {
     const diaNum = dataObj.getDay();
     const diaSigla = MAPA_DIAS[diaNum];
     
-    // 1. Número da semana no mês
     const ocorrenciaSemana = Math.ceil(dataObj.getDate() / 7);
-
-    // 2. Regra Dinâmica da Semana (se houver)
     const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
         r.diaSemana === diaNum && r.semanas.includes(ocorrenciaSemana)
     );
 
-    // 3. Hierarquia (Exceção Exata > Regra Semana > Regra Padrão)
     const regraDoDia = configAgenda.excecoes?.[formatoAPI] || regraSemanaDinamica || configAgenda.horariosPorDia[diaNum];
     const barbeariaAberta = regraDoDia?.ativo;
-    
     const eFeriado = configAgenda.feriadosAtivos && feriados.some(f => f.date === formatoAPI);
     
     if (!barbeariaAberta || eFeriado) return false;
@@ -161,15 +168,10 @@ export default function Cliente({ servicos }) {
     const diaSemana = dia.dataReal.getDay()
     const diaSigla = MAPA_DIAS[diaSemana] 
     
-    // 1. Número da semana no mês
     const ocorrenciaSemana = Math.ceil(dia.dataReal.getDate() / 7);
-
-    // 2. Regra Dinâmica da Semana (se houver)
     const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
         r.diaSemana === diaSemana && r.semanas.includes(ocorrenciaSemana)
     );
-
-    // 3. Hierarquia (Exceção Exata > Regra Semana > Regra Padrão)
     const regraDoDia = configAgenda.excecoes?.[dia.formatoAPI] || regraSemanaDinamica || configAgenda.horariosPorDia[diaSemana];
     
     let ocupados = []
@@ -261,13 +263,24 @@ export default function Cliente({ servicos }) {
       setMeusAgendamentos(lista)
       setModo('historico')
     } catch(error) {
-      alert("Erro ao buscar histórico.")
+      Toast.fire({ icon: 'error', title: 'Erro ao buscar histórico.' })
     }
     setCarregandoHistorico(false)
   }
 
   const cancelarMeuAgendamento = async (agendamento) => {
-    if(window.confirm(`Deseja cancelar o agendamento de ${agendamento.servico} do dia ${formatarDataAmigavel(agendamento.data)} às ${agendamento.hora}?`)) {
+    const result = await Swal.fire({
+      title: 'Atenção!',
+      text: `Deseja cancelar o agendamento de ${agendamento.servico} do dia ${formatarDataAmigavel(agendamento.data)} às ${agendamento.hora}?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, cancelar',
+      cancelButtonText: 'Voltar'
+    });
+
+    if (result.isConfirmed) {
       try {
         await updateDoc(doc(db, "agendamentos", agendamento.id), { status: 'Cancelado' })
         
@@ -284,9 +297,9 @@ export default function Cliente({ servicos }) {
           a.id === agendamento.id ? { ...a, status: 'Cancelado' } : a
         ))
         
-        alert("Agendamento cancelado com sucesso!")
+        Toast.fire({ icon: 'success', title: 'Agendamento cancelado com sucesso!' })
       } catch (error) {
-        alert("Erro ao cancelar o agendamento.")
+        Toast.fire({ icon: 'error', title: 'Erro ao cancelar o agendamento.' })
       }
     }
   }
@@ -355,9 +368,6 @@ export default function Cliente({ servicos }) {
         await updateDoc(doc(db, "clientes", perfil.telefone), { cortesRestantes: perfil.cortesRestantes - 1 })
       }
 
-      // ==========================================================
-      // 🟢 INÍCIO: AVISAR O BOT PARA ENVIAR O "EFEITO UAU"
-      // ==========================================================
       try {
         await fetch('http://localhost:3001/api/bot/enviar-confirmacao', {
           method: 'POST',
@@ -368,7 +378,7 @@ export default function Cliente({ servicos }) {
             telefone: contato.telefone,
             nomeCliente: contato.nome,
             servico: escolha.servico.nome,
-            data: formatarDataAmigavel(escolha.data), // Já formata para ficar bonito ex: 15/06
+            data: formatarDataAmigavel(escolha.data),
             horario: escolha.hora,
             barbeiro: barbeiroFinalNome
           })
@@ -376,14 +386,11 @@ export default function Cliente({ servicos }) {
       } catch (errorBot) {
         console.error("Erro ao acionar o bot, mas o agendamento foi salvo:", errorBot);
       }
-      // ==========================================================
-      // 🔴 FIM: AVISAR O BOT
-      // ==========================================================
 
       setSucesso(true)
     } catch (erro) { 
       console.error(erro);
-      alert("Erro ao confirmar."); 
+      Toast.fire({ icon: 'error', title: 'Erro ao confirmar a reserva.' })
     }
     setSalvando(false)
   }
@@ -401,15 +408,32 @@ export default function Cliente({ servicos }) {
     return `${dia}/${mes}`
   }
 
+  // DEFINIÇÃO DAS CORES CSS BASEADO NO ESTADO TEMA (isDark)
+  const themeStyles = isDark ? {
+    '--cor-bg-geral': '#1a1a1a',
+    '--cor-card': '#242424',
+    '--cor-borda': '#333333',
+    '--cor-texto-principal': '#ffffff',
+    '--cor-texto-secundario': '#9ca3af', // gray-400
+    '--cor-primaria': '#dc2626', // red-600
+  } : {
+    '--cor-bg-geral': '#f3f4f6', // gray-100
+    '--cor-card': '#ffffff',
+    '--cor-borda': '#d1d5db', // gray-300
+    '--cor-texto-principal': '#111827', // gray-900
+    '--cor-texto-secundario': '#4b5563', // gray-600
+    '--cor-primaria': '#dc2626', // Mantendo o vermelho como destaque/marca
+  }
+
   if (sucesso) {
     return (
-      <div className="min-h-screen w-full bg-[#1a1a1a] text-white flex flex-col items-center justify-center text-center p-6 animate-in zoom-in">
+      <div style={themeStyles} className="min-h-screen w-full bg-[var(--cor-bg-geral)] text-[var(--cor-texto-principal)] flex flex-col items-center justify-center text-center p-6 animate-in zoom-in transition-colors duration-300">
         <div className="w-20 h-20 bg-green-600/20 rounded-full flex items-center justify-center mb-6 border-2 border-green-500">
           <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </div>
-        <h1 className="text-3xl font-black italic mb-2 text-white">RESERVADO!</h1>
-        <p className="text-gray-400">Dia <strong>{formatarDataAmigavel(escolha.data)}</strong> às <strong>{escolha.hora}</strong>, te esperamos lá!</p>
-        <button onClick={() => window.location.reload()} className="mt-8 bg-red-600 px-8 py-3 rounded-xl font-bold hover:bg-red-700 transition-all">VOLTAR AO INÍCIO</button>
+        <h1 className="text-3xl font-black italic mb-2 text-[var(--cor-texto-principal)]">RESERVADO!</h1>
+        <p className="text-[var(--cor-texto-secundario)]">Dia <strong>{formatarDataAmigavel(escolha.data)}</strong> às <strong>{escolha.hora}</strong>, te esperamos lá!</p>
+        <button onClick={() => window.location.reload()} className="mt-8 bg-[var(--cor-primaria)] text-white px-8 py-3 rounded-xl font-bold hover:opacity-80 transition-all">VOLTAR AO INÍCIO</button>
       </div>
     )
   }
@@ -427,46 +451,57 @@ export default function Cliente({ servicos }) {
   const isMesLimite = mesVisivel.getFullYear() === dataLimite.getFullYear() && mesVisivel.getMonth() === dataLimite.getMonth();
 
   return (
-    <div className="min-h-screen w-full bg-[#1a1a1a] text-white font-sans selection:bg-red-600">
+    <div style={themeStyles} className="min-h-screen w-full bg-[var(--cor-bg-geral)] text-[var(--cor-texto-principal)] font-sans transition-colors duration-300">
       <div className="max-w-md mx-auto p-6 min-h-screen pb-24">
         
         <header className="flex justify-between items-center mb-6 pt-4">
           <div onClick={() => window.location.reload()} className="cursor-pointer">
-            <h1 className="text-2xl font-black italic text-red-600 tracking-tighter uppercase">Antunes</h1>
+            <h1 className="text-2xl font-black italic text-[var(--cor-primaria)] tracking-tighter uppercase">Antunes</h1>
           </div>
           
-          {modo === 'agendamento' ? (
-            <div className="flex gap-2">
-              <button 
-                onClick={() => setModo('login_historico')} 
-                className="text-[9px] bg-[#242424] border border-[#333] text-gray-300 font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:text-white hover:border-gray-500 transition-all"
-              >
-                Agendamentos
-              </button>
-              <button 
-                onClick={() => setModo('login_assinante')} 
-                className="text-[9px] bg-red-600 text-white font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-600/20"
-              >
-                Assinaturas
-              </button>
-            </div>
-          ) : (
-            <button onClick={sairOuVoltar} className="text-[10px] bg-[#242424] border border-[#333] text-gray-400 hover:text-white font-black px-3 py-2 rounded-lg uppercase tracking-widest">
-              {modo === 'assinante_logado' || modo === 'historico' ? 'Sair' : 'Voltar ao Início'}
+          <div className="flex items-center gap-2">
+            {/* BOTÃO DE INVERTER TEMA */}
+            <button 
+              onClick={() => setIsDark(!isDark)} 
+              className="p-2 bg-[var(--cor-card)] border border-[var(--cor-borda)] rounded-lg text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] transition-all flex items-center justify-center"
+              title="Alternar Tema"
+            >
+              {isDark ? '☀️' : '🌙'}
             </button>
-          )}
+
+            {modo === 'agendamento' ? (
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setModo('login_historico')} 
+                  className="text-[9px] bg-[var(--cor-card)] border border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:text-[var(--cor-texto-principal)] hover:border-[var(--cor-texto-secundario)] transition-all"
+                >
+                  Agendamentos
+                </button>
+                <button 
+                  onClick={() => setModo('login_assinante')} 
+                  className="text-[9px] bg-[var(--cor-primaria)] text-white font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:opacity-90 shadow-lg"
+                >
+                  Assinaturas
+                </button>
+              </div>
+            ) : (
+              <button onClick={sairOuVoltar} className="text-[10px] bg-[var(--cor-card)] border border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] font-black px-3 py-2 rounded-lg uppercase tracking-widest">
+                {modo === 'assinante_logado' || modo === 'historico' ? 'Sair' : 'Voltar ao Início'}
+              </button>
+            )}
+          </div>
         </header>
 
         {modo === 'assinante_logado' && perfil && (
-          <div className="bg-gradient-to-br from-[#242424] to-[#1a1a1a] p-5 rounded-2xl border border-red-600/30 shadow-lg mb-8 animate-in fade-in slide-in-from-top-4 flex items-center justify-between">
+          <div className="bg-[var(--cor-card)] p-5 rounded-2xl border border-[var(--cor-primaria)] shadow-lg mb-8 animate-in fade-in slide-in-from-top-4 flex items-center justify-between">
             <div>
-              <p className="text-[10px] text-red-500 uppercase tracking-widest font-black mb-1">Membro VIP</p>
-              <h2 className="text-xl font-black text-white italic uppercase truncate max-w-[180px]">{perfil.nome}</h2>
+              <p className="text-[10px] text-[var(--cor-primaria)] uppercase tracking-widest font-black mb-1">Membro VIP</p>
+              <h2 className="text-xl font-black text-[var(--cor-texto-principal)] italic uppercase truncate max-w-[180px]">{perfil.nome}</h2>
             </div>
             <div className="text-right flex-shrink-0">
-              <div className="bg-red-600/10 border border-red-600/30 rounded-xl px-4 py-2 flex flex-col items-center justify-center">
-                <span className="text-3xl font-black text-red-500 leading-none">{perfil.cortesRestantes !== undefined ? perfil.cortesRestantes : 0}</span>
-                <span className="text-[9px] text-gray-400 uppercase tracking-widest font-bold mt-1">Créditos</span>
+              <div className="bg-[var(--cor-primaria)] border border-[var(--cor-primaria)] rounded-xl px-4 py-2 flex flex-col items-center justify-center bg-opacity-10">
+                <span className="text-3xl font-black text-[var(--cor-primaria)] leading-none">{perfil.cortesRestantes !== undefined ? perfil.cortesRestantes : 0}</span>
+                <span className="text-[9px] text-[var(--cor-texto-secundario)] uppercase tracking-widest font-bold mt-1">Créditos</span>
               </div>
             </div>
           </div>
@@ -475,12 +510,12 @@ export default function Cliente({ servicos }) {
         {modo === 'login_assinante' && (
           <div className="animate-in fade-in duration-500 space-y-6">
             <div className="text-center mt-8">
-              <h2 className="text-2xl font-black italic uppercase tracking-tighter text-white">Área do <span className="text-red-600">Assinante</span></h2>
+              <h2 className="text-2xl font-black italic uppercase tracking-tighter text-[var(--cor-texto-principal)]">Área do <span className="text-[var(--cor-primaria)]">Assinante</span></h2>
             </div>
             <form onSubmit={fazerLogin} className="space-y-4">
-              <input required value={telefoneLogin} onChange={e => setTelefoneLogin(e.target.value)} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[#242424] border border-[#333] p-5 rounded-2xl text-white outline-none focus:border-red-600 text-center text-xl font-black tracking-widest" />
-              {erroLogin && <p className="text-red-500 text-xs text-center font-bold">{erroLogin}</p>}
-              <button type="submit" className="w-full bg-red-600 text-white font-black py-5 rounded-2xl uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-600/20">Entrar no Plano</button>
+              <input required value={telefoneLogin} onChange={e => setTelefoneLogin(e.target.value)} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[var(--cor-card)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] text-center text-xl font-black tracking-widest transition-colors" />
+              {erroLogin && <p className="text-[var(--cor-primaria)] text-xs text-center font-bold">{erroLogin}</p>}
+              <button type="submit" className="w-full bg-[var(--cor-primaria)] text-white font-black py-5 rounded-2xl uppercase tracking-widest hover:opacity-90 shadow-lg">Entrar no Plano</button>
             </form>
           </div>
         )}
@@ -488,12 +523,12 @@ export default function Cliente({ servicos }) {
         {modo === 'login_historico' && (
           <div className="animate-in fade-in duration-500 space-y-6">
             <div className="text-center mt-8">
-              <h2 className="text-2xl font-black italic uppercase tracking-tighter text-white">Meus <span className="text-red-600">Agendamentos</span></h2>
-              <p className="text-xs text-gray-500 mt-2">Acesse seu histórico e gerencie suas reservas</p>
+              <h2 className="text-2xl font-black italic uppercase tracking-tighter text-[var(--cor-texto-principal)]">Meus <span className="text-[var(--cor-primaria)]">Agendamentos</span></h2>
+              <p className="text-xs text-[var(--cor-texto-secundario)] mt-2">Acesse seu histórico e gerencie suas reservas</p>
             </div>
             <form onSubmit={buscarHistorico} className="space-y-4">
-              <input required value={telefoneHistorico} onChange={e => setTelefoneHistorico(e.target.value)} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[#242424] border border-[#333] p-5 rounded-2xl text-white outline-none focus:border-red-600 text-center text-xl font-black tracking-widest" />
-              <button type="submit" disabled={carregandoHistorico} className="w-full bg-[#111] border border-[#333] hover:border-red-600 text-white font-black py-5 rounded-2xl uppercase tracking-widest transition-all">
+              <input required value={telefoneHistorico} onChange={e => setTelefoneHistorico(e.target.value)} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[var(--cor-card)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] text-center text-xl font-black tracking-widest transition-colors" />
+              <button type="submit" disabled={carregandoHistorico} className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] hover:border-[var(--cor-primaria)] text-[var(--cor-texto-principal)] font-black py-5 rounded-2xl uppercase tracking-widest transition-all">
                 {carregandoHistorico ? 'Buscando...' : 'Ver Meu Histórico'}
               </button>
             </form>
@@ -502,27 +537,27 @@ export default function Cliente({ servicos }) {
 
         {modo === 'historico' && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right">
-            <h2 className="text-lg font-black italic uppercase tracking-tighter text-white mb-6">Seu <span className="text-red-600">Histórico</span></h2>
+            <h2 className="text-lg font-black italic uppercase tracking-tighter text-[var(--cor-texto-principal)] mb-6">Seu <span className="text-[var(--cor-primaria)]">Histórico</span></h2>
             
             {meusAgendamentos.length === 0 ? (
-               <div className="text-center p-10 bg-[#242424] rounded-3xl border border-[#333]">
-                 <p className="text-gray-400 font-bold text-sm">Nenhum agendamento encontrado.</p>
+               <div className="text-center p-10 bg-[var(--cor-card)] rounded-3xl border border-[var(--cor-borda)]">
+                 <p className="text-[var(--cor-texto-secundario)] font-bold text-sm">Nenhum agendamento encontrado.</p>
                </div>
             ) : (
                meusAgendamentos.map(ag => {
                  const isPendente = ag.status !== 'Concluído' && ag.status !== 'Cancelado'
                  return (
-                   <div key={ag.id} className={`p-5 rounded-3xl border transition-all ${!isPendente ? 'bg-[#111] border-[#222] opacity-60' : 'bg-[#242424] border-[#333] border-l-4 border-l-red-600'}`}>
+                   <div key={ag.id} className={`p-5 rounded-3xl border transition-all ${!isPendente ? 'bg-[var(--cor-bg-geral)] border-[var(--cor-borda)] opacity-70' : 'bg-[var(--cor-card)] border-[var(--cor-borda)] border-l-4 border-l-[var(--cor-primaria)]'}`}>
                       <div className="flex justify-between items-start mb-2">
                          <div>
-                           <p className="text-white font-black uppercase text-lg italic">{ag.servico}</p>
-                           <p className="text-xs text-gray-400 mt-1 font-bold">
+                           <p className="text-[var(--cor-texto-principal)] font-black uppercase text-lg italic">{ag.servico}</p>
+                           <p className="text-xs text-[var(--cor-texto-secundario)] mt-1 font-bold">
                              {formatarDataAmigavel(ag.data)} às {ag.hora} <br/> 
-                             <span className="text-gray-500 font-normal">com {ag.barbeiro}</span>
+                             <span className="font-normal">com {ag.barbeiro}</span>
                            </p>
                          </div>
                          <div className="text-right">
-                           <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg ${isPendente ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : ag.status === 'Cancelado' ? 'bg-red-500/20 text-red-500' : 'bg-gray-800 text-gray-500'}`}>
+                           <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg ${isPendente ? 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/20' : ag.status === 'Cancelado' ? 'bg-red-500/20 text-red-600' : 'bg-green-500/10 text-green-600 border-green-500/20'}`}>
                              {ag.status || 'Pendente'}
                            </span>
                          </div>
@@ -531,7 +566,7 @@ export default function Cliente({ servicos }) {
                       {isPendente && (
                          <button 
                            onClick={() => cancelarMeuAgendamento(ag)} 
-                           className="w-full mt-4 bg-red-600/10 border border-red-600/20 text-red-500 hover:bg-red-600 hover:text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all"
+                           className="w-full mt-4 bg-[var(--cor-primaria)] bg-opacity-10 border border-[var(--cor-primaria)] text-[var(--cor-primaria)] hover:bg-[var(--cor-primaria)] hover:text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all"
                          >
                            Cancelar Agendamento
                          </button>
@@ -548,17 +583,17 @@ export default function Cliente({ servicos }) {
             
             {etapa === 1 && (
               <div className="space-y-3 animate-in fade-in">
-                <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Selecione o Corte</h2>
+                <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Selecione o Corte</h2>
                 {listaParaMostrar.map(s => {
                   const estaIncluso = modo === 'assinante_logado' && (perfil.servicosInclusos.includes(s.nome) || s.isCombo)
                   const temSaldo = modo === 'assinante_logado' && perfil.cortesRestantes > 0
                   return (
-                    <div key={s.id} onClick={() => { setEscolha({...escolha, servico: s}); setEtapa(2); }} className={`bg-[#242424] p-5 rounded-2xl border ${s.isCombo ? 'border-red-600/50' : 'border-[#333]'} flex justify-between items-center hover:border-red-600 cursor-pointer group`}>
+                    <div key={s.id} onClick={() => { setEscolha({...escolha, servico: s}); setEtapa(2); }} className={`bg-[var(--cor-card)] p-5 rounded-2xl border ${s.isCombo ? 'border-[var(--cor-primaria)] border-opacity-50' : 'border-[var(--cor-borda)]'} flex justify-between items-center hover:border-[var(--cor-primaria)] cursor-pointer group transition-colors`}>
                       <div>
-                        <p className="font-bold text-lg text-white uppercase">{s.isCombo && <span className="text-red-500 mr-2">★</span>} {s.nome}</p>
-                        <p className="text-xs text-gray-400 mt-1">{s.tempo} • <span className={`${estaIncluso && temSaldo ? 'text-green-500 font-black' : 'text-red-500 font-bold'}`}>{estaIncluso && temSaldo ? 'INCLUSO NO PLANO' : s.preco}</span></p>
+                        <p className="font-bold text-lg text-[var(--cor-texto-principal)] uppercase">{s.isCombo && <span className="text-[var(--cor-primaria)] mr-2">★</span>} {s.nome}</p>
+                        <p className="text-xs text-[var(--cor-texto-secundario)] mt-1">{s.tempo} • <span className={`${estaIncluso && temSaldo ? 'text-green-500 font-black' : 'text-[var(--cor-primaria)] font-bold'}`}>{estaIncluso && temSaldo ? 'INCLUSO NO PLANO' : s.preco}</span></p>
                       </div>
-                      <span className="text-red-600 font-bold text-xl">→</span>
+                      <span className="text-[var(--cor-primaria)] font-bold text-xl">→</span>
                     </div>
                   )
                 })}
@@ -567,23 +602,23 @@ export default function Cliente({ servicos }) {
 
             {etapa === 2 && (
               <div className="space-y-4 animate-in slide-in-from-right">
-                <button onClick={() => setEtapa(1)} className="text-gray-400 hover:text-white text-[10px] font-black uppercase">← Voltar</button>
-                <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Escolha o Profissional</h2>
+                <button onClick={() => setEtapa(1)} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar</button>
+                <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Escolha o Profissional</h2>
                 
-                <div onClick={() => { setEscolha({...escolha, barbeiro: {id: 'qualquer', nome: 'Sem Preferência'}}); setEtapa(3); }} className="bg-red-600/10 p-4 rounded-2xl border border-red-600/30 flex items-center gap-4 hover:bg-red-600/20 cursor-pointer group transition-all mb-2">
-                  <div className="w-14 h-14 flex-shrink-0 bg-red-600 flex items-center justify-center rounded-full text-white">
+                <div onClick={() => { setEscolha({...escolha, barbeiro: {id: 'qualquer', nome: 'Sem Preferência'}}); setEtapa(3); }} className="bg-[var(--cor-primaria)] bg-opacity-10 p-4 rounded-2xl border border-[var(--cor-primaria)] border-opacity-30 flex items-center gap-4 hover:bg-opacity-20 cursor-pointer group transition-all mb-2">
+                  <div className="w-14 h-14 flex-shrink-0 bg-[var(--cor-primaria)] flex items-center justify-center rounded-full text-white">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                   </div>
                   <div>
-                    <p className="font-black text-lg text-red-500 uppercase italic">Qualquer um</p>
-                    <p className="text-[10px] text-gray-400 uppercase tracking-widest">Mais horários livres</p>
+                    <p className="font-black text-lg text-[var(--cor-primaria)] uppercase italic">Qualquer um</p>
+                    <p className="text-[10px] text-[var(--cor-texto-secundario)] uppercase tracking-widest">Mais horários livres</p>
                   </div>
                 </div>
 
                 {barbeiros.map(b => (
-                  <div key={b.id} onClick={() => { setEscolha({...escolha, barbeiro: b}); setEtapa(3); }} className="bg-[#242424] p-4 rounded-2xl border border-[#333] flex items-center gap-4 hover:border-red-600 cursor-pointer">
-                    <div className="w-14 h-14 flex-shrink-0">{b.foto ? <img src={b.foto} className="w-full h-full rounded-full border-2 border-red-600 object-cover" /> : <FotoPadrao />}</div>
-                    <p className="font-bold text-lg text-white uppercase italic">{b.nome}</p>
+                  <div key={b.id} onClick={() => { setEscolha({...escolha, barbeiro: b}); setEtapa(3); }} className="bg-[var(--cor-card)] p-4 rounded-2xl border border-[var(--cor-borda)] flex items-center gap-4 hover:border-[var(--cor-primaria)] cursor-pointer transition-colors">
+                    <div className="w-14 h-14 flex-shrink-0">{b.foto ? <img src={b.foto} className="w-full h-full rounded-full border-2 border-[var(--cor-primaria)] object-cover" /> : <FotoPadrao />}</div>
+                    <p className="font-bold text-lg text-[var(--cor-texto-principal)] uppercase italic">{b.nome}</p>
                   </div>
                 ))}
               </div>
@@ -591,27 +626,27 @@ export default function Cliente({ servicos }) {
 
             {etapa === 3 && (
               <div className="space-y-4 animate-in slide-in-from-right">
-                <button onClick={() => { setEtapa(2); setFeriadoSelecionado(null); }} className="text-gray-400 hover:text-white text-[10px] font-black uppercase">← Voltar</button>
-                <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Escolha o Dia</h2>
+                <button onClick={() => { setEtapa(2); setFeriadoSelecionado(null); }} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar</button>
+                <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Escolha o Dia</h2>
                 
-                <div className="bg-[#242424] p-5 rounded-3xl border border-[#333] shadow-lg">
+                <div className="bg-[var(--cor-card)] p-5 rounded-3xl border border-[var(--cor-borda)] shadow-lg">
                   <div className="flex justify-between items-center mb-6">
                     <button 
                       onClick={() => { setMesVisivel(new Date(mesVisivel.getFullYear(), mesVisivel.getMonth() - 1, 1)); setFeriadoSelecionado(null); }} 
                       disabled={isMesAtual} 
-                      className={`p-2 rounded-xl transition-colors ${isMesAtual ? 'text-[#333]' : 'text-red-500 hover:bg-[#111]'}`}
+                      className={`p-2 rounded-xl transition-colors ${isMesAtual ? 'text-[var(--cor-borda)]' : 'text-[var(--cor-primaria)] hover:bg-[var(--cor-bg-geral)]'}`}
                     >
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
                     </button>
                     
-                    <span className="font-black text-lg uppercase tracking-widest text-white">
-                      {NOMES_MESES[mesVisivel.getMonth()]} <span className="text-gray-500">{mesVisivel.getFullYear()}</span>
+                    <span className="font-black text-lg uppercase tracking-widest text-[var(--cor-texto-principal)]">
+                      {NOMES_MESES[mesVisivel.getMonth()]} <span className="text-[var(--cor-texto-secundario)]">{mesVisivel.getFullYear()}</span>
                     </span>
                     
                     <button 
                       onClick={() => { setMesVisivel(new Date(mesVisivel.getFullYear(), mesVisivel.getMonth() + 1, 1)); setFeriadoSelecionado(null); }} 
                       disabled={isMesLimite} 
-                      className={`p-2 rounded-xl transition-colors ${isMesLimite ? 'text-[#333]' : 'text-red-500 hover:bg-[#111]'}`}
+                      className={`p-2 rounded-xl transition-colors ${isMesLimite ? 'text-[var(--cor-borda)]' : 'text-[var(--cor-primaria)] hover:bg-[var(--cor-bg-geral)]'}`}
                     >
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                     </button>
@@ -619,7 +654,7 @@ export default function Cliente({ servicos }) {
 
                   <div className="grid grid-cols-7 gap-2 text-center mb-3">
                     {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((d, i) => (
-                      <span key={i} className="text-[10px] font-black text-gray-500 uppercase">{d}</span>
+                      <span key={i} className="text-[10px] font-black text-[var(--cor-texto-secundario)] uppercase">{d}</span>
                     ))}
                   </div>
 
@@ -647,25 +682,25 @@ export default function Cliente({ servicos }) {
                           }} 
                           className={`aspect-square w-full rounded-2xl flex items-center justify-center text-sm font-bold transition-all relative
                             ${disponivel 
-                              ? 'text-white bg-[#111] hover:bg-red-600 hover:scale-105 border border-[#333] hover:border-red-600 shadow-sm' 
+                              ? 'text-[var(--cor-texto-principal)] bg-[var(--cor-bg-geral)] hover:bg-[var(--cor-primaria)] hover:text-white hover:scale-105 border border-[var(--cor-borda)] hover:border-[var(--cor-primaria)] shadow-sm' 
                               : eFeriado 
-                                ? 'border-2 border-red-600 text-red-500 bg-red-600/5 animate-pulse cursor-pointer' 
-                                : 'text-gray-600 opacity-20 cursor-not-allowed'}`}
+                                ? 'border-2 border-[var(--cor-primaria)] text-[var(--cor-primaria)] bg-[var(--cor-primaria)] bg-opacity-10 animate-pulse cursor-pointer' 
+                                : 'text-[var(--cor-texto-secundario)] opacity-30 cursor-not-allowed'}`}
                         >
                           {dia.getDate()}
-                          {eFeriado && <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full"></span>}
+                          {eFeriado && <span className="absolute -top-1 -right-1 w-2 h-2 bg-[var(--cor-primaria)] rounded-full"></span>}
                         </button>
                       )
                     })}
                   </div>
                   
                   {feriadoSelecionado && (
-                    <div className="mt-6 p-4 bg-red-600/10 border border-red-600/30 rounded-2xl animate-in fade-in zoom-in">
-                      <div className="flex items-center gap-2 text-red-500 mb-1">
+                    <div className="mt-6 p-4 bg-[var(--cor-primaria)] bg-opacity-10 border border-[var(--cor-primaria)] border-opacity-30 rounded-2xl animate-in fade-in zoom-in">
+                      <div className="flex items-center gap-2 text-[var(--cor-primaria)] mb-1">
                         <Info size={16} />
                         <span className="text-[10px] font-black uppercase tracking-widest">Feriado Detectado</span>
                       </div>
-                      <p className="text-white font-bold text-sm mt-2">Fechado devido a: <span className="italic">{feriadoSelecionado}</span></p>
+                      <p className="text-[var(--cor-texto-principal)] font-bold text-sm mt-2">Fechado devido a: <span className="italic">{feriadoSelecionado}</span></p>
                     </div>
                   )}
 
@@ -675,8 +710,8 @@ export default function Cliente({ servicos }) {
 
             {etapa === 4 && (
               <div className="space-y-4 animate-in slide-in-from-right">
-                <button onClick={() => setEtapa(3)} className="text-gray-400 hover:text-white text-[10px] font-black uppercase">← Voltar para Dias</button>
-                <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Horários em {formatarDataAmigavel(escolha.data)}</h2>
+                <button onClick={() => setEtapa(3)} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar para Dias</button>
+                <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Horários em {formatarDataAmigavel(escolha.data)}</h2>
                 <div className="grid grid-cols-3 gap-3">
                   {horariosGerados.map(h => {
                     const estaOcupado = horariosOcupados.includes(h)
@@ -686,43 +721,43 @@ export default function Cliente({ servicos }) {
                         disabled={estaOcupado}
                         onClick={() => { setEscolha({...escolha, hora: h}); setEtapa(5); }} 
                         className={`py-4 rounded-xl font-black text-sm transition-all border 
-                          ${estaOcupado ? 'bg-[#111] border-[#222] text-gray-600 line-through opacity-50 cursor-not-allowed' : 'bg-[#242424] text-white border-[#333] hover:bg-red-600 hover:border-red-600'}`}
+                          ${estaOcupado ? 'bg-[var(--cor-bg-geral)] border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] line-through opacity-50 cursor-not-allowed' : 'bg-[var(--cor-card)] text-[var(--cor-texto-principal)] border-[var(--cor-borda)] hover:bg-[var(--cor-primaria)] hover:text-white hover:border-[var(--cor-primaria)]'}`}
                       >
                         {h}
                       </button>
                     )
                   })}
                 </div>
-                {horariosGerados.length === 0 && <p className="text-center text-xs text-gray-500 mt-10">Nenhum horário disponível para este dia.</p>}
+                {horariosGerados.length === 0 && <p className="text-center text-xs text-[var(--cor-texto-secundario)] mt-10">Nenhum horário disponível para este dia.</p>}
               </div>
             )}
 
             {etapa === 5 && (
               <div className="space-y-6 animate-in slide-in-from-right">
-                <button onClick={() => setEtapa(4)} className="text-gray-400 hover:text-white text-[10px] font-black uppercase">← Voltar aos Horários</button>
+                <button onClick={() => setEtapa(4)} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar aos Horários</button>
                 
-                <div className="bg-[#242424] p-6 rounded-2xl border-l-4 border-l-red-600 border-[#333] shadow-lg">
-                  <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-2">Resumo da Reserva</p>
-                  <p className="text-xl font-black uppercase italic text-white">{escolha.servico.nome}</p>
-                  <p className="text-sm text-gray-400 mt-1">
-                    Com <span className="text-white font-bold">{escolha.barbeiro.id === 'qualquer' ? 'Profissional Disponível' : escolha.barbeiro.nome}</span> no dia <span className="text-white font-bold">{formatarDataAmigavel(escolha.data)}</span> às <span className="text-white font-bold">{escolha.hora}</span>
+                <div className="bg-[var(--cor-card)] p-6 rounded-2xl border-l-4 border-l-[var(--cor-primaria)] border-[var(--cor-borda)] shadow-lg">
+                  <p className="text-[10px] font-black text-[var(--cor-primaria)] uppercase tracking-widest mb-2">Resumo da Reserva</p>
+                  <p className="text-xl font-black uppercase italic text-[var(--cor-texto-principal)]">{escolha.servico.nome}</p>
+                  <p className="text-sm text-[var(--cor-texto-secundario)] mt-1">
+                    Com <span className="text-[var(--cor-texto-principal)] font-bold">{escolha.barbeiro.id === 'qualquer' ? 'Profissional Disponível' : escolha.barbeiro.nome}</span> no dia <span className="text-[var(--cor-texto-principal)] font-bold">{formatarDataAmigavel(escolha.data)}</span> às <span className="text-[var(--cor-texto-principal)] font-bold">{escolha.hora}</span>
                   </p>
                   
-                  <div className="mt-4 pt-4 border-t border-[#333]">
-                    <p className="text-xs text-gray-500 uppercase font-black">Valor Final</p>
+                  <div className="mt-4 pt-4 border-t border-[var(--cor-borda)]">
+                    <p className="text-xs text-[var(--cor-texto-secundario)] uppercase font-black">Valor Final</p>
                     {modo === 'assinante_logado' && (perfil.servicosInclusos.includes(escolha.servico.nome) || escolha.servico.isCombo) && perfil.cortesRestantes > 0 ? (
                       <p className="text-lg font-black text-green-500">1 Crédito do Plano</p>
                     ) : (
-                      <p className="text-lg font-black text-red-500">{escolha.servico.preco} (Pagar no local)</p>
+                      <p className="text-lg font-black text-[var(--cor-primaria)]">{escolha.servico.preco} (Pagar no local)</p>
                     )}
                   </div>
                 </div>
 
                 <form onSubmit={finalizarAgendamento} className="space-y-4">
-                  <input required value={contato.telefone} onChange={e => setContato({...contato, telefone: e.target.value})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[#111111] border border-[#333] p-5 rounded-2xl text-white outline-none focus:border-red-600" />
-                  <input required value={contato.nome} onChange={e => setContato({...contato, nome: e.target.value})} placeholder="Seu Nome Completo" className="w-full bg-[#111111] border border-[#333] p-5 rounded-2xl text-white outline-none focus:border-red-600" />
+                  <input required value={contato.telefone} onChange={e => setContato({...contato, telefone: e.target.value})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors" />
+                  <input required value={contato.nome} onChange={e => setContato({...contato, nome: e.target.value})} placeholder="Seu Nome Completo" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors" />
                   
-                  <button type="submit" disabled={salvando} className="w-full bg-red-600 text-white font-black py-5 rounded-2xl hover:bg-red-700 shadow-lg shadow-red-600/20 uppercase tracking-widest mt-4">
+                  <button type="submit" disabled={salvando} className="w-full bg-[var(--cor-primaria)] text-white font-black py-5 rounded-2xl hover:opacity-90 shadow-lg uppercase tracking-widest mt-4 transition-opacity">
                     {salvando ? 'Processando...' : (modo === 'assinante_logado' && (perfil.servicosInclusos.includes(escolha.servico.nome) || escolha.servico.isCombo) && perfil.cortesRestantes > 0) ? 'CONFIRMAR (USAR CRÉDITO)' : 'CONFIRMAR AGENDAMENTO'}
                   </button>
                 </form>

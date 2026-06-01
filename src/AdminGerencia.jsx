@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, doc, getDoc, addDoc, onSnapshot, deleteDoc, updateDoc, query, where } from 'firebase/firestore'
+import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc, query, where } from 'firebase/firestore'
 import { 
   Banknote, CreditCard, QrCode, TrendingUp, 
-  Scissors, User, Save, XCircle, CheckCircle2, Calendar, UserPlus, Trash2, Edit2, ShoppingBag, Wallet,
+  Scissors, User, Save, XCircle, CheckCircle2, Calendar, Edit2, ShoppingBag, Wallet,
   DollarSign, Receipt, TrendingDown, Eye, Activity
 } from 'lucide-react'
 import AdminComissoes from './AdminComissoes' 
 import TicketMedio from './TicketMedio'
-import AdminDespesas from './AdminDespesas' // <-- IMPORTAMOS O COMPONENTE DE DESPESAS
+import AdminDespesas from './AdminDespesas'
+import Swal from 'sweetalert2'
 
 export default function AdminGerencia() {
   // ==========================================
@@ -42,7 +43,7 @@ export default function AdminGerencia() {
   
   const [previewInfo, setPreviewInfo] = useState(null); 
   const [mostrarTicketMedio, setMostrarTicketMedio] = useState(false); 
-  const [mostrarDespesas, setMostrarDespesas] = useState(false); // <-- ESTADO PARA CONTROLAR AS DESPESAS
+  const [mostrarDespesas, setMostrarDespesas] = useState(false); 
   const [agendamentosDados, setAgendamentosDados] = useState([]); 
 
   const [cores, setCores] = useState({
@@ -245,11 +246,11 @@ export default function AdminGerencia() {
   }, [])
 
   // ==========================================
-  // FUNÇÕES DO GERENCIADOR DE EQUIPE (CRUD)
+  // FUNÇÕES DO GERENCIADOR DE EQUIPE (APENAS EDIÇÃO DE COMISSÕES)
   // ==========================================
   const salvarBarbeiro = async (e) => {
     e.preventDefault();
-    if (!nome.trim()) return alert("O nome do barbeiro é obrigatório.");
+    if (!editandoId) return; // Segurança para garantir que é apenas edição
 
     try {
       const dadosBarbeiro = {
@@ -258,29 +259,27 @@ export default function AdminGerencia() {
         comissaoProduto: Number(comissaoProduto)
       };
 
-      if (editandoId) {
-        await updateDoc(doc(db, "barbeiros", editandoId), dadosBarbeiro);
-        setEditandoId(null);
-      } else {
-        await addDoc(collection(db, "barbeiros"), dadosBarbeiro);
-      }
+      await updateDoc(doc(db, "barbeiros", editandoId), dadosBarbeiro);
 
+      Swal.fire({
+        icon: 'success',
+        title: 'Comissões Atualizadas!',
+        text: 'As informações do barbeiro foram salvas com sucesso.',
+        timer: 2000,
+        showConfirmButton: false
+      });
+
+      setEditandoId(null);
       setNome('');
       setComissaoServico(50);
       setComissaoProduto(15);
     } catch (error) {
       console.error("Erro ao salvar barbeiro:", error);
-      alert("Erro ao salvar as configurações do barbeiro.");
-    }
-  };
-
-  const excluirBarbeiro = async (id) => {
-    if (window.confirm("Tem certeza que deseja remover este barbeiro?")) {
-      try {
-        await deleteDoc(doc(db, "barbeiros", id));
-      } catch (error) {
-        console.error("Erro ao excluir:", error);
-      }
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: 'Erro ao salvar as configurações do barbeiro.'
+      });
     }
   };
 
@@ -324,7 +323,7 @@ export default function AdminGerencia() {
       {previewInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in duration-200">
           <div className="rounded-[2rem] p-6 w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden relative" 
-               style={{ backgroundColor: cores.card, borderColor: cores.borda, borderWidth: '1px' }}>
+                style={{ backgroundColor: cores.card, borderColor: cores.borda, borderWidth: '1px' }}>
             
             <div className="flex justify-between items-center mb-6 pb-4 border-b" style={{ borderColor: hexToRgba(cores.borda, 0.1) }}>
               <div>
@@ -486,7 +485,7 @@ export default function AdminGerencia() {
           </div>
 
           <div className="p-5 rounded-3xl border overflow-hidden flex flex-col" 
-               style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+                style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
             <p className="text-[10px] uppercase font-black opacity-50 mb-3" style={{ color: cores.textoSecundario }}>Top Serviços</p>
             {visaoGeral.servicosRanking.length === 0 ? (
               <p className="text-xs font-bold opacity-50 flex-1 flex items-center" style={{ color: cores.texto }}>Sem dados.</p>
@@ -696,71 +695,78 @@ export default function AdminGerencia() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* FORMULÁRIO DE CADASTRO/EDIÇÃO */}
+        
+        {/* FORMULÁRIO DE EDIÇÃO (APARECE APENAS QUANDO UM BARBEIRO É SELECIONADO) */}
         <div className="lg:col-span-1">
-          <form onSubmit={salvarBarbeiro} className="p-6 rounded-3xl border shadow-sm" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
-            <h3 className="text-lg font-black uppercase mb-6 flex items-center gap-2">
-              {editandoId ? <Edit2 size={18} /> : <UserPlus size={18} />}
-              {editandoId ? 'Editar Barbeiro' : 'Novo Barbeiro'}
-            </h3>
+          {editandoId ? (
+            <form onSubmit={salvarBarbeiro} className="p-6 rounded-3xl border shadow-sm animate-in fade-in" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+              <h3 className="text-lg font-black uppercase mb-6 flex items-center gap-2">
+                <Edit2 size={18} />
+                Editar Comissões
+              </h3>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-black uppercase opacity-50 ml-2">Nome do Profissional</label>
-                <input 
-                  type="text" 
-                  value={nome}
-                  onChange={(e) => setNome(e.target.value)}
-                  className="w-full p-4 rounded-2xl border outline-none font-bold focus:brightness-95 transition-all"
-                  style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: hexToRgba(cores.borda, 0.3), color: cores.texto }}
-                  placeholder="Ex: Carlos Silva"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1"><Scissors size={10}/> % Serviço</label>
+                  <label className="text-[10px] font-black uppercase opacity-50 ml-2">Nome do Profissional</label>
                   <input 
-                    type="number" 
-                    value={comissaoServico}
-                    onChange={(e) => setComissaoServico(e.target.value)}
-                    className="w-full p-4 rounded-2xl border outline-none font-black focus:brightness-95 transition-all"
-                    style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: hexToRgba(cores.borda, 0.3), color: '#16a34a' }}
-                    min="0" max="100"
+                    type="text" 
+                    value={nome}
+                    readOnly
+                    className="w-full p-4 rounded-2xl border outline-none font-bold opacity-60 cursor-not-allowed"
+                    style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: hexToRgba(cores.borda, 0.3), color: cores.texto }}
                   />
                 </div>
-                <div>
-                  <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1"><ShoppingBag size={10}/> % Produto</label>
-                  <input 
-                    type="number" 
-                    value={comissaoProduto}
-                    onChange={(e) => setComissaoProduto(e.target.value)}
-                    className="w-full p-4 rounded-2xl border outline-none font-black focus:brightness-95 transition-all"
-                    style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: hexToRgba(cores.borda, 0.3), color: '#3b82f6' }}
-                    min="0" max="100"
-                  />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1"><Scissors size={10}/> % Serviço</label>
+                    <input 
+                      type="number" 
+                      value={comissaoServico}
+                      onChange={(e) => setComissaoServico(e.target.value)}
+                      className="w-full p-4 rounded-2xl border outline-none font-black focus:brightness-95 transition-all"
+                      style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: hexToRgba(cores.borda, 0.3), color: '#16a34a' }}
+                      min="0" max="100"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1"><ShoppingBag size={10}/> % Produto</label>
+                    <input 
+                      type="number" 
+                      value={comissaoProduto}
+                      onChange={(e) => setComissaoProduto(e.target.value)}
+                      className="w-full p-4 rounded-2xl border outline-none font-black focus:brightness-95 transition-all"
+                      style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: hexToRgba(cores.borda, 0.3), color: '#3b82f6' }}
+                      min="0" max="100"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <button 
-              type="submit"
-              className="w-full mt-6 py-4 rounded-2xl font-black uppercase tracking-widest text-white shadow-lg hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-              style={{ backgroundColor: cores.primaria }}
-            >
-              <Save size={18} /> {editandoId ? 'Atualizar Dados' : 'Cadastrar Barbeiro'}
-            </button>
+              <button 
+                type="submit"
+                className="w-full mt-6 py-4 rounded-2xl font-black uppercase tracking-widest text-white shadow-lg hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+                style={{ backgroundColor: cores.primaria }}
+              >
+                <Save size={18} /> Atualizar Comissões
+              </button>
 
-            {editandoId && (
               <button 
                 type="button"
                 onClick={() => { setEditandoId(null); setNome(''); setComissaoServico(50); setComissaoProduto(15); }}
-                className="w-full mt-2 py-3 rounded-2xl font-bold text-xs uppercase opacity-60 hover:opacity-100 transition-all"
+                className="w-full mt-2 py-3 rounded-2xl font-bold text-xs uppercase opacity-60 hover:opacity-100 transition-all text-center"
               >
                 Cancelar Edição
               </button>
-            )}
-          </form>
+            </form>
+          ) : (
+            <div className="p-8 rounded-3xl border shadow-sm flex flex-col items-center justify-center h-full text-center" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+              <User size={48} className="mb-4 opacity-20" style={{ color: cores.texto }} />
+              <p className="text-sm font-bold opacity-50 uppercase" style={{ color: cores.texto }}>
+                Selecione um barbeiro na lista ao lado para editar suas comissões.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* LISTA DE BARBEIROS CADASTRADOS */}
@@ -779,11 +785,12 @@ export default function AdminGerencia() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => editarBarbeiro(barbeiro)} className="p-2 rounded-xl transition-colors hover:brightness-110" style={{ backgroundColor: hexToRgba('#3b82f6', 0.1), color: '#3b82f6' }}>
-                      <Edit2 size={16} />
-                    </button>
-                    <button onClick={() => excluirBarbeiro(barbeiro.id)} className="p-2 rounded-xl transition-colors hover:brightness-110" style={{ backgroundColor: hexToRgba('#ef4444', 0.1), color: '#ef4444' }}>
-                      <Trash2 size={16} />
+                    <button 
+                      onClick={() => editarBarbeiro(barbeiro)} 
+                      className="p-2 rounded-xl transition-colors hover:brightness-110 flex items-center gap-2 px-3" 
+                      style={{ backgroundColor: hexToRgba('#3b82f6', 0.1), color: '#3b82f6' }}
+                    >
+                      <Edit2 size={16} /> <span className="text-[10px] font-black uppercase">Editar</span>
                     </button>
                   </div>
                 </div>

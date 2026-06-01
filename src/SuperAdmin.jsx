@@ -37,9 +37,9 @@ export default function SuperAdmin() {
       await setDoc(doc(db, "configuracoes", "plano"), {
         limiteBarbeiros: Number(limite)
       })
-      alert("Limite atualizado!")
+      toast.success("Limite atualizado!")
     } catch (e) {
-      alert("Erro ao salvar")
+      toast.error("Erro ao salvar")
     } finally { setSalvando(false) }
   }
 

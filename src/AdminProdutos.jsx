@@ -9,6 +9,7 @@ import {
   Trash2, Edit3, Layers, BarChart3, 
   Minus, ArrowDownUp, AlertCircle, UploadCloud, AlertTriangle 
 } from 'lucide-react'
+import Swal from 'sweetalert2'
 
 export default function AdminProdutos() {
   const [produtos, setProdutos] = useState([])
@@ -126,7 +127,7 @@ export default function AdminProdutos() {
       }
       fecharModal()
     } catch (error) { 
-      alert("Erro ao salvar: " + error.message) 
+      toast.error("Erro ao salvar: " + error.message) 
     } finally { 
       setCarregando(false) 
     }
@@ -138,7 +139,7 @@ export default function AdminProdutos() {
       try {
         await deleteDoc(doc(db, "produtos", id))
       } catch (error) {
-        alert("Erro ao excluir: " + error.message)
+        toast.error("Erro ao excluir: " + error.message)
       }
     }
   }
@@ -154,7 +155,7 @@ export default function AdminProdutos() {
         atualizadoEm: serverTimestamp()
       })
     } catch (error) {
-      alert("Erro ao atualizar estoque: " + error.message)
+      toast.error("Erro ao atualizar estoque: " + error.message)
     }
   }
 

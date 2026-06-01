@@ -24,7 +24,7 @@ export default function AdminSuporte() {
       setMensagem('')
       setTimeout(() => setEnviado(false), 5000)
     } catch (error) {
-      alert("Erro ao enviar mensagem. Tente novamente.")
+      toast.error("Erro ao enviar mensagem. Tente novamente.")
     } finally {
       setEnviando(false)
     }

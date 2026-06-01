@@ -72,9 +72,9 @@ export default function AdminBarbeiros() {
         data: serverTimestamp(),
         status: "pendente"
       });
-      alert("Solicitação enviada com sucesso!");
+      toast.success("Solicitação enviada com sucesso!");
     } catch (e) {
-      alert("Erro ao enviar solicitação.");
+      toast.error("Erro ao enviar solicitação.");
     } finally { setEnviandoSolicitacao(false); }
   }
 

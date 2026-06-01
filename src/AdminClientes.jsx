@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, getDocs, doc, updateDoc, setDoc, query, where, deleteDoc, writeBatch } from 'firebase/firestore'
+import Swal from 'sweetalert2'
 
 export default function AdminClientes() {
   const [clientes, setClientes] = useState([])
@@ -59,7 +60,7 @@ export default function AdminClientes() {
         planoId: mapaClientes[tel].planoId || '',
         planoNome: mapaClientes[tel].planoNome || '',
         cortesRestantes: mapaClientes[tel].cortesRestantes || 0,
-        dataLimite: mapaClientes[tel].dataLimite || '' // <--- Garante que a data seja carregada
+        dataLimite: mapaClientes[tel].dataLimite || '' 
       })
     }
 
@@ -88,9 +89,18 @@ export default function AdminClientes() {
   useEffect(() => { carregarDados() }, [])
 
   const excluirCliente = async (cliente) => {
-    const confirmar = window.confirm(`ATENÇÃO: Deseja deletar permanentemente o cliente ${cliente.nome}? Isso apagará todo o histórico de agendamentos e o plano ativo.`)
+    const result = await Swal.fire({
+      title: 'Atenção!',
+      text: `Deseja deletar permanentemente o cliente ${cliente.nome}? Isso apagará todo o histórico de agendamentos e o plano ativo.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, excluir!',
+      cancelButtonText: 'Cancelar'
+    });
     
-    if (confirmar) {
+    if (result.isConfirmed) {
       try {
         await deleteDoc(doc(db, "clientes", cliente.telefone))
         const q = query(collection(db, "agendamentos"), where("clienteTelefone", "==", cliente.telefone))
@@ -102,11 +112,11 @@ export default function AdminClientes() {
         })
         await batch.commit()
 
-        alert("Cliente removido com sucesso!")
+        toast.success("Cliente removido com sucesso!")
         carregarDados() 
       } catch (erro) {
         console.error("Erro ao deletar:", erro)
-        alert("Erro ao remover cliente.")
+        toast.error("Erro ao remover cliente.")
       }
     }
   }
@@ -139,7 +149,7 @@ export default function AdminClientes() {
       lista.sort((a, b) => new Date(b.data) - new Date(a.data) || b.hora.localeCompare(a.hora))
       setHistorico(lista)
     } catch (error) {
-      alert("Erro ao carregar histórico.")
+      toast.error("Erro ao carregar histórico.")
     }
     setCarregandoHistorico(false)
   }
@@ -177,7 +187,7 @@ export default function AdminClientes() {
       carregarDados()
     } catch (erro) {
       console.error(erro)
-      alert("Erro ao salvar cliente.")
+      toast.error("Erro ao salvar cliente.")
     }
     setSalvando(false)
   }
@@ -190,7 +200,6 @@ export default function AdminClientes() {
     }
     const planoEncontrado = planos.find(p => p.id === idEscolhido)
     
-    // --- LÓGICA DE DATA AUTOMÁTICA ---
     let novaDataLimite = ''
     if (planoEncontrado.validadeDias && Number(planoEncontrado.validadeDias) > 0) {
       const dataAtual = new Date();
@@ -208,14 +217,26 @@ export default function AdminClientes() {
 
   const debitarCorte = async (cliente) => {
     if (cliente.cortesRestantes > 0) {
-      if (window.confirm(`Debitar 1 corte do plano de ${cliente.nome}? (Restam ${cliente.cortesRestantes})`)) {
+      const result = await Swal.fire({
+        title: 'Debitar Corte?',
+        text: `Debitar 1 corte do plano de ${cliente.nome}? (Restam ${cliente.cortesRestantes})`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        cancelButtonColor: '#d33',
+        confirmButtonText: 'Sim, debitar!',
+        cancelButtonText: 'Cancelar'
+      });
+
+      if (result.isConfirmed) {
         await updateDoc(doc(db, "clientes", cliente.telefone), {
           cortesRestantes: cliente.cortesRestantes - 1
         })
         carregarDados()
+        toast.success("Corte debitado com sucesso!")
       }
     } else {
-      alert("Este cliente não tem mais créditos neste plano!")
+      toast("Este cliente não tem mais créditos neste plano!")
     }
   }
 

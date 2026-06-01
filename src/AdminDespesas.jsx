@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { Plus, Trash2, Calendar, TrendingDown, DollarSign, XCircle } from 'lucide-react';
+import Swal from 'sweetalert2'
 
 export default function AdminDespesas({ onClose }) {
   const [configCores, setConfigCores] = useState(null);
@@ -54,7 +55,7 @@ export default function AdminDespesas({ onClose }) {
   // 3. Adicionar Nova Despesa
   const salvarDespesa = async (e) => {
     e.preventDefault();
-    if (!descricao.trim() || !valor) return alert("Preencha a descrição e o valor.");
+    if (!descricao.trim() || !valor) return toast("Preencha a descrição e o valor.");
 
     try {
       // Extrai o ano e o mês da data selecionada para o filtro (YYYY-MM)
@@ -74,7 +75,7 @@ export default function AdminDespesas({ onClose }) {
       setValor('');
     } catch (error) {
       console.error("Erro ao salvar despesa:", error);
-      alert("Erro ao registrar a despesa.");
+      toast.error("Erro ao registrar a despesa.");
     }
   };
 
