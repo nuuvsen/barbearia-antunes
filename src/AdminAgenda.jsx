@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore'
 import { CalendarDays, Clock, UserCheck, Trash2, User } from 'lucide-react'
+import Swal from 'sweetalert2' // <-- Importação do SweetAlert2 adicionada
 
 const MAPA_DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const NOMES_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
@@ -63,9 +64,25 @@ export default function AdminAgenda() {
   }, [dataSelecionada, barbeiroFiltro])
 
   const cancelarCorte = async (id) => {
+    // 👇 TRAVA DE SEGURANÇA OFFLINE 👇
+    if (!navigator.onLine) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Sem Conexão!',
+        text: 'Você está offline. Conecte-se à internet para deletar agendamentos.',
+        confirmButtonColor: 'var(--cor-primaria)'
+      });
+      return; // Para a execução da função aqui
+    }
+    // 👆 FIM DA TRAVA 👆
+
     if (confirm("Deseja realmente cancelar este agendamento?")) {
-      await deleteDoc(doc(db, "agendamentos", id))
-      buscarAgendamentos() 
+      try {
+        await deleteDoc(doc(db, "agendamentos", id))
+        buscarAgendamentos() 
+      } catch (error) {
+        console.error("Erro ao cancelar:", error)
+      }
     }
   }
 
@@ -224,7 +241,7 @@ export default function AdminAgenda() {
                         <User size={12} style={{ color: 'var(--cor-primaria)' }} /> {item.barbeiro}
                       </span>
                       <span className="text-[10px] flex items-center gap-1 font-bold uppercase" style={{ color: 'var(--cor-texto-secundario)' }}>
-                         📱 {item.clienteTelefone}
+                          📱 {item.clienteTelefone}
                       </span>
                     </div>
                   </div>

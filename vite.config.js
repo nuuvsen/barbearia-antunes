@@ -2,8 +2,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import electron from 'vite-plugin-electron'
+import renderer from 'vite-plugin-electron-renderer'
 
 export default defineConfig({
+  base: './', // CRÍTICO: Permite que o .exe encontre os arquivos locais
   plugins: [
     react(),
     tailwindcss(),
@@ -17,6 +20,12 @@ export default defineConfig({
       devOptions: {
         enabled: true // Permite que você teste a instalação rodando 'npm run dev'
       }
-    })
+    }),
+    electron([
+      {
+        entry: 'electron/main.js', // Onde ficará o código do Desktop
+      },
+    ]),
+    renderer(),
   ],
 })

@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth"; // <-- 1. Importamos a ferramenta de Auth
+import { initializeFirestore, persistentLocalCache } from "firebase/firestore";
+import { getAuth } from "firebase/auth"; 
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -16,10 +16,13 @@ const firebaseConfig = {
 // Inicializa a conexão com o Google
 const app = initializeApp(firebaseConfig);
 
-// Inicializa o Banco de Dados e "exporta" ele
-export const db = getFirestore(app);
+// Inicializa o banco de dados COM suporte offline e "exporta" ele
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache()
+});
 
 // Inicializa a Autenticação e "exporta" ela (ISSO RESOLVE A TELA BRANCA)
 export const auth = getAuth(app);
 
+// Inicializa o Storage e "exporta" ele
 export const storage = getStorage(app);
