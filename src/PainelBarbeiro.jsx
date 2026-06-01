@@ -1,30 +1,68 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from './firebase'; 
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, onSnapshot, doc, updateDoc, addDoc, getDoc } from 'firebase/firestore';
+import { CalendarDays } from 'lucide-react';
+import Swal from 'sweetalert2';
+import toast from 'react-hot-toast';
+
+const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
 
 export default function PainelBarbeiro() {
-  // Estados para o Login
+  // Estados para o Login e Autenticação
   const [nome, setNome] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
   const [logado, setLogado] = useState(false);
-  
-  // Estados para a Agenda do Barbeiro
-  const [barbeiroLogado, setBarbeiroLogado] = useState(null);
-  const [agendamentos, setAgendamentos] = useState([]);
   const [carregando, setCarregando] = useState(true);
-  const [erroAgenda, setErroAgenda] = useState('');
+  
+  // Estados de Dados (Perfil, Agenda, Configurações)
+  const [barbeiroPerfil, setBarbeiroPerfil] = useState(null);
+  const [agendamentos, setAgendamentos] = useState([]);
+  const [configCores, setConfigCores] = useState(null);
+  const [configAgenda, setConfigAgenda] = useState(null);
+  const [dataSelecionada, setDataSelecionada] = useState(new Date());
 
-  // Verifica se alguém já está logado ao abrir a página
+  // 1. CARREGAR CORES E CONFIGURAÇÃO DA AGENDA (Global)
+  useEffect(() => {
+    const qCores = query(collection(db, "configuracoes"));
+    const unsubCores = onSnapshot(qCores, (snapshot) => {
+      snapshot.forEach(docSnap => {
+        if (docSnap.id === 'personalizacao') {
+          setConfigCores(docSnap.data().cores);
+        }
+      });
+    });
+
+    const getAgenda = async () => {
+      const docRef = doc(db, "configuracoes", "agenda");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setConfigAgenda(docSnap.data());
+      }
+    };
+    getAgenda();
+
+    return () => unsubCores();
+  }, []);
+
+  // 2. MONITORAR AUTENTICAÇÃO E PERFIL
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setLogado(true);
-        setBarbeiroLogado(user);
-        await buscarAgenda(user.uid); 
+        // Buscar o documento real do barbeiro com base no UID
+        const qPerfil = query(collection(db, "barbeiros"), where("uid", "==", user.uid));
+        const snapPerfil = await getDocs(qPerfil);
+        
+        if (!snapPerfil.empty) {
+          setBarbeiroPerfil({ id: snapPerfil.docs[0].id, ...snapPerfil.docs[0].data() });
+        } else {
+          setErro("Perfil não encontrado. Verifique com o administrador.");
+        }
       } else {
         setLogado(false);
+        setBarbeiroPerfil(null);
       }
       setCarregando(false);
     });
@@ -32,15 +70,36 @@ export default function PainelBarbeiro() {
     return () => unsubscribe();
   }, []);
 
-  // Função disparada ao clicar em "Entrar"
+  // 3. MONITORAR AGENDAMENTOS EM TEMPO REAL
+  useEffect(() => {
+    if (!barbeiroPerfil) return;
+
+    // Traz apenas os agendamentos deste barbeiro para otimizar leitura
+    const qAgendamentos = query(
+      collection(db, "agendamentos"), 
+      where("barbeiro", "==", barbeiroPerfil.nome)
+    );
+
+    const unsubAgendamentos = onSnapshot(qAgendamentos, (snapshot) => {
+      const lista = snapshot.docs.map(docSnap => ({ 
+        id: docSnap.id, 
+        ...docSnap.data() 
+      }));
+      setAgendamentos(lista);
+    });
+
+    return () => unsubAgendamentos();
+  }, [barbeiroPerfil]);
+
+  // =========================================================================
+  // FUNÇÕES DE AÇÃO 
+  // =========================================================================
   const gerirLogin = async (e) => {
     e.preventDefault();
-    
     if (senha.length < 6) {
       setErro("A senha deve ter pelo menos 6 dígitos.");
       return;
     }
-
     try {
       const emailFicticio = `${nome.toLowerCase().replace(/\s/g, '')}@antunes.com`;
       await signInWithEmailAndPassword(auth, emailFicticio, senha);
@@ -50,60 +109,177 @@ export default function PainelBarbeiro() {
     }
   };
 
-  // --- NOVA BUSCA: Espelhada no AdminDashboard ---
-  const buscarAgenda = async (uidAuth) => {
-    try {
-      setErroAgenda('');
-      
-      // 1. Descobrir o NOME real do barbeiro logado
-      const qPerfil = query(collection(db, "barbeiros"), where("uid", "==", uidAuth));
-      const snapPerfil = await getDocs(qPerfil);
-
-      if (snapPerfil.empty) {
-        setErroAgenda("Perfil não encontrado. Verifique com o administrador.");
-        return;
-      }
-
-      const nomeDoBarbeiro = snapPerfil.docs[0].data().nome;
-
-      // 2. Buscar TODOS os agendamentos (igual no Admin)
-      const snapAgendamentos = await getDocs(collection(db, "agendamentos"));
-      let todosAgendamentos = snapAgendamentos.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-      // 3. Filtrar apenas os agendamentos DESTE barbeiro e que estão ativos
-      let agendaDoBarbeiro = todosAgendamentos.filter(ag => 
-        ag.barbeiro === nomeDoBarbeiro && 
-        ag.status !== 'Cancelado' && 
-        ag.status !== 'Concluído'
-      );
-
-      // 4. Ordenar por Data e Hora
-      agendaDoBarbeiro.sort((a, b) => {
-        const dataA = a.data || "";
-        const dataB = b.data || "";
-        const horaA = a.hora || "";
-        const horaB = b.hora || "";
-        return dataA.localeCompare(dataB) || horaA.localeCompare(horaB);
-      });
-
-      // 5. Pegar apenas os 5 primeiros
-      const proximos5 = agendaDoBarbeiro.slice(0, 5);
-
-      setAgendamentos(proximos5);
-
-    } catch (error) {
-      console.error("Erro ao buscar agenda:", error);
-      setErroAgenda("Erro ao carregar os clientes. Tente novamente.");
-    }
-  };
-
   const fazerLogout = () => {
     signOut(auth);
   };
 
+  const excluirAgendamento = async (id) => {
+    Swal.fire({
+      title: 'Cancelar Agendamento?',
+      text: "Deseja marcar este agendamento como Cancelado?",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, cancelar!',
+      cancelButtonText: 'Voltar',
+      background: configCores?.card || '#ffffff',
+      color: configCores?.texto || '#000000'
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
+          toast.success("Agendamento marcado como cancelado!");
+        } catch (error) {
+          console.error("Erro ao cancelar:", error);
+          toast.error("Falha ao cancelar o agendamento.");
+        }
+      }
+    });
+  };
+
+  const bloquearHorarioDaGrade = async (hora) => {
+    if (!barbeiroPerfil) return;
+
+    Swal.fire({
+      title: 'Bloquear Horário?',
+      text: `Deseja fechar a sua agenda às ${hora}?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, bloquear!',
+      cancelButtonText: 'Cancelar',
+      background: configCores?.card || '#ffffff',
+      color: configCores?.texto || '#000000'
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          await addDoc(collection(db, "agendamentos"), {
+            clienteNome: "🔒 HORÁRIO BLOQUEADO",
+            clienteTelefone: "00000000000",
+            servico: "Bloqueio Manual",
+            barbeiro: barbeiroPerfil.nome,
+            data: getFormatosData(dataSelecionada).br,
+            hora: hora,
+            status: "Pendente",
+            tipo: "agendamento"
+          });
+          toast.success("Horário bloqueado com sucesso!");
+        } catch (error) {
+          console.error("Erro ao bloquear:", error);
+          toast.error("Falha ao bloquear horário.");
+        }
+      }
+    });
+  };
+
+  const formatarWhatsApp = (numero) => {
+    if (!numero) return '#';
+    return `https://wa.me/55${String(numero).replace(/\D/g, '')}`;
+  };
+
+  // =========================================================================
+  // LÓGICA DE DATAS E GRADE
+  // =========================================================================
+  const getFormatosData = (dataBase) => {
+    const ano = dataBase.getFullYear();
+    const mes = String(dataBase.getMonth() + 1).padStart(2, '0');
+    const dia = String(dataBase.getDate()).padStart(2, '0');
+    return { iso: `${ano}-${mes}-${dia}`, br: `${dia}/${mes}/${ano}` };
+  };
+
+  const gerarProximosDias = () => {
+    return Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+  };
+
+  const gerarGradeDaData = (dataAlvo) => {
+    if (!configAgenda || !configAgenda.horariosPorDia) return []; 
+    const diaNum = dataAlvo.getDay(); 
+    const formatoISO = getFormatosData(dataAlvo).iso;
+    const ocorrenciaSemana = Math.ceil(dataAlvo.getDate() / 7);
+
+    const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
+        r.diaSemana === diaNum && r.semanas.includes(ocorrenciaSemana)
+    );
+
+    const regraDoDia = configAgenda.excecoes?.[formatoISO] || regraSemanaDinamica || configAgenda.horariosPorDia[diaNum];
+
+    if (!regraDoDia || !regraDoDia.ativo) return []; 
+
+    const intervaloMinutos = parseInt(configAgenda.intervalo) || 30; 
+    let grade = [];
+
+    const calcularTurno = (horaInicio, horaFim) => {
+      if (!horaInicio || !horaFim) return;
+      let [hAtual, mAtual] = horaInicio.split(':').map(Number);
+      let [hFinal, mFinal] = horaFim.split(':').map(Number);
+      let atual = (hAtual * 60) + mAtual;
+      const totalFim = (hFinal * 60) + mFinal;
+
+      while (atual + intervaloMinutos <= totalFim) {
+        const horaFormatada = String(Math.floor(atual / 60)).padStart(2, '0');
+        const minutoFormatado = String(atual % 60).padStart(2, '0');
+        grade.push(`${horaFormatada}:${minutoFormatado}`);
+        atual += intervaloMinutos;
+      }
+    };
+
+    calcularTurno(regraDoDia.t1Ini, regraDoDia.t1Fim);
+    calcularTurno(regraDoDia.t2Ini, regraDoDia.t2Fim);
+
+    return [...new Set(grade)];
+  };
+
+  const diasSemana = gerarProximosDias();
+  const nomesDiasCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  const chavesDiasTrabalho = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+
+  const formatosSel = getFormatosData(dataSelecionada);
+  const formatosHoje = getFormatosData(new Date());
+  const isHoje = formatosSel.iso === formatosHoje.iso;
+  const horariosDaData = gerarGradeDaData(dataSelecionada);
+
+  // Variáveis para controle de tempo atual (esconder horários passados)
+  const dataHojeObj = new Date();
+  const horaSpString = dataHojeObj.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  const [hAtual, mAtual] = horaSpString.split(':').map(Number);
+  const minutosAtuais = hAtual * 60 + mAtual;
+
+  // Filtragem principal da grade do barbeiro
+  const diaSemanaSelecionado = dataSelecionada.getDay();
+  const chaveDia = chavesDiasTrabalho[diaSemanaSelecionado];
+  const barbeiroTrabalhaHj = barbeiroPerfil?.diasTrabalho ? barbeiroPerfil.diasTrabalho[chaveDia] !== false : true;
+
+  const agendamentosAtivos = agendamentos.filter(ag => 
+    ag.status !== 'Concluído' && 
+    ag.status !== 'Cancelado' &&
+    (ag.data === formatosSel.br || ag.data === formatosSel.iso)
+  );
+
+  const horariosFiltrados = horariosDaData.filter(hora => {
+    const ocupado = agendamentosAtivos.find(ag => ag.hora === hora);
+    if (ocupado) return true; 
+    if (!barbeiroTrabalhaHj) return false;
+    if (isHoje) {
+      const [hSlot, mSlot] = hora.split(':').map(Number);
+      const minutosSlot = (hSlot * 60) + mSlot;
+      return minutosSlot >= minutosAtuais; 
+    }
+    return true; 
+  });
+
+  // =========================================================================
+  // RENDERIZAÇÃO
+  // =========================================================================
   if (carregando) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center font-black text-red-600 text-2xl animate-pulse italic">
+      <div className="min-h-screen flex items-center justify-center font-black text-2xl animate-pulse italic"
+           style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.primaria || '#dc2626' }}>
         Carregando painel...
       </div>
     );
@@ -112,17 +288,18 @@ export default function PainelBarbeiro() {
   // --- TELA 1: LOGIN ---
   if (!logado) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
-        <form onSubmit={gerirLogin} className="bg-zinc-900 p-8 rounded-lg shadow-lg w-96 border border-zinc-800">
-          <h2 className="text-2xl font-black mb-6 text-center text-red-600 italic tracking-tighter">
+      <div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff' }}>
+        <form onSubmit={gerirLogin} className="p-8 rounded-lg shadow-lg w-96 border" style={{ backgroundColor: configCores?.card || '#18181b', borderColor: configCores?.borda || '#27272a' }}>
+          <h2 className="text-2xl font-black mb-6 text-center italic tracking-tighter" style={{ color: configCores?.primaria || '#dc2626' }}>
             ACESSO BARBEIRO
           </h2>
           
           <div className="mb-4">
-            <label className="block mb-2 font-bold text-sm text-zinc-300">Seu Nome:</label>
+            <label className="block mb-2 font-bold text-sm" style={{ color: configCores?.textoSecundario || '#d4d4d8' }}>Seu Nome:</label>
             <input 
               type="text" 
-              className="w-full p-3 rounded bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-red-500 font-bold uppercase"
+              className="w-full p-3 rounded border focus:outline-none font-bold uppercase transition-colors"
+              style={{ backgroundColor: configCores?.fundo || '#27272a', borderColor: configCores?.borda || '#3f3f46', color: configCores?.texto || '#ffffff' }}
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               placeholder="Ex: Joao"
@@ -131,10 +308,11 @@ export default function PainelBarbeiro() {
           </div>
 
           <div className="mb-6">
-            <label className="block mb-2 font-bold text-sm text-zinc-300">Senha:</label>
+            <label className="block mb-2 font-bold text-sm" style={{ color: configCores?.textoSecundario || '#d4d4d8' }}>Senha:</label>
             <input 
               type="password" 
-              className="w-full p-3 rounded bg-zinc-800 border border-zinc-700 focus:outline-none focus:border-red-500 font-bold"
+              className="w-full p-3 rounded border focus:outline-none font-bold transition-colors"
+              style={{ backgroundColor: configCores?.fundo || '#27272a', borderColor: configCores?.borda || '#3f3f46', color: configCores?.texto || '#ffffff' }}
               value={senha}
               onChange={(e) => setSenha(e.target.value)}
               placeholder="Mínimo 6 dígitos"
@@ -142,9 +320,10 @@ export default function PainelBarbeiro() {
             />
           </div>
 
-          {erro && <p className="text-red-500 mb-4 text-sm text-center font-bold uppercase tracking-widest">{erro}</p>}
+          {erro && <p className="mb-4 text-sm text-center font-bold uppercase tracking-widest" style={{ color: configCores?.primaria || '#ef4444' }}>{erro}</p>}
 
-          <button type="submit" className="w-full bg-red-600 hover:bg-red-700 p-3 rounded font-black transition text-white uppercase tracking-wider">
+          <button type="submit" className="w-full p-3 rounded font-black transition uppercase tracking-wider shadow-lg hover:brightness-110"
+                  style={{ backgroundColor: configCores?.primaria || '#dc2626', color: '#ffffff' }}>
             Entrar
           </button>
         </form>
@@ -152,69 +331,143 @@ export default function PainelBarbeiro() {
     );
   }
 
-  // --- TELA 2: AGENDA ---
+  // --- TELA 2: AGENDA DO BARBEIRO ---
   return (
-    <div className="min-h-screen bg-zinc-100 p-4 md:p-6">
-      <header className="flex justify-between items-center bg-white p-4 rounded-lg shadow mb-6 border-b-4 border-red-600">
-        <h1 className="text-lg md:text-2xl font-black text-black italic tracking-tighter">
-          ANTUNES.OS | <span className="text-red-600">Sua Agenda</span>
+    <div className="min-h-screen p-4 md:p-6" style={{ backgroundColor: configCores?.fundo || '#f4f4f5' }}>
+      
+      <header className="flex justify-between items-center p-4 rounded-xl shadow mb-6 border-b-4"
+              style={{ backgroundColor: configCores?.card || '#ffffff', borderColor: configCores?.primaria || '#dc2626' }}>
+        <h1 className="text-lg md:text-2xl font-black italic tracking-tighter" style={{ color: configCores?.texto || '#000000' }}>
+          ANTUNES.OS | <span style={{ color: configCores?.primaria || '#dc2626' }}>Minha Agenda</span>
         </h1>
         <button 
           onClick={fazerLogout}
-          className="bg-black hover:bg-zinc-800 text-white font-bold py-2 px-6 rounded transition uppercase tracking-widest text-xs"
+          className="font-bold py-2 px-6 rounded-lg transition uppercase tracking-widest text-xs hover:brightness-125 border shadow-sm"
+          style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff', borderColor: configCores?.borda || 'transparent' }}
         >
           Sair
         </button>
       </header>
 
-      <main className="bg-white p-4 md:p-6 rounded-lg shadow max-w-4xl mx-auto">
-        <div className="flex justify-between items-end mb-4 border-b pb-2">
-          <h2 className="text-xl font-bold text-zinc-800 uppercase tracking-tighter">Próximos Clientes</h2>
-          <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Top 5</span>
-        </div>
+      <main className="mx-auto max-w-4xl space-y-6">
         
-        {erroAgenda && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 font-bold text-sm">
-            {erroAgenda}
-          </div>
-        )}
+        <div className="flex items-center justify-between mt-8 mb-4">
+          <h2 className="text-xl font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+            <CalendarDays size={20} /> Controle de Fila
+          </h2>
+        </div>
 
-        {agendamentos.length > 0 ? (
-          <ul className="space-y-3">
-            {agendamentos.map((agendamento, index) => (
-              <li 
-                key={agendamento.id} 
-                // AQUI FOI ALTERADO: Aplicado o estilo escuro idêntico ao AdminDashboard
-                className={`py-4 px-4 flex justify-between items-center rounded-lg transition-all bg-[#111111] border border-[#1f1f1f] border-l-4 border-l-red-600 ${
-                  index === 0 ? 'shadow-md' : ''
-                }`}
+        {/* CARROSSEL DE DATAS */}
+        <div className="flex gap-3 overflow-x-auto pb-4 custom-scrollbar mb-4">
+          {diasSemana.map((dia, idx) => {
+            const dadosDia = getFormatosData(dia);
+            const isSelected = dadosDia.iso === formatosSel.iso;
+            
+            return (
+              <button
+                key={idx}
+                onClick={() => setDataSelecionada(dia)}
+                className={`min-w-[85px] p-3 rounded-2xl border flex flex-col items-center justify-center transition-all ${isSelected ? 'shadow-md scale-105' : 'opacity-60 hover:opacity-100'}`}
+                style={{
+                  backgroundColor: isSelected ? (configCores?.primaria || 'var(--cor-primaria)') : (configCores?.card || 'var(--cor-card)'),
+                  borderColor: isSelected ? (configCores?.primaria || 'var(--cor-primaria)') : (configCores?.borda || 'var(--cor-borda)'),
+                  color: isSelected ? '#ffffff' : (configCores?.texto || 'var(--cor-texto-principal)')
+                }}
               >
-                <div>
-                  {index === 0 && (
-                    <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded font-black uppercase tracking-widest mb-1 inline-block">
-                      Próximo da Fila
-                    </span>
-                  )}
-                  {/* Atualizado para usar clienteNome e ajustado a cor para branco e cinza claro */}
-                  <p className="font-black text-lg text-white uppercase tracking-tighter">{agendamento.clienteNome}</p>
-                  <p className="text-sm text-gray-400 font-bold uppercase">{agendamento.servico}</p>
-                </div>
-                <div className="text-right">
-                  {/* Atualizado para usar hora e ajustado a cor para branco e cinza claro */}
-                  <p className="font-black text-white text-xl tracking-tighter">{agendamento.hora}</p>
-                  <p className="font-bold text-gray-400 text-xs uppercase tracking-widest">{agendamento.data}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          !erroAgenda && (
-            <div className="text-center py-12 bg-zinc-50 rounded-lg border border-dashed border-zinc-200">
-              <p className="text-zinc-500 font-black text-lg uppercase tracking-tighter">Nenhum agendamento na fila.</p>
-              <p className="text-zinc-400 font-bold text-sm">Aproveite para tomar um café!</p>
+                <span className="text-[10px] uppercase font-black tracking-widest mb-1">
+                  {idx === 0 ? 'Hoje' : nomesDiasCurto[dia.getDay()]}
+                </span>
+                <span className="text-lg font-bold">
+                  {dia.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* GRADE DE HORÁRIOS */}
+        <div className="p-5 rounded-[2rem] border shadow-sm" 
+             style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+          
+          <div className="flex items-center gap-3 mb-4 pb-4 border-b" style={{ borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-white text-xs bg-black/20"
+                 style={{ backgroundColor: configCores?.primaria || 'var(--cor-primaria)' }}>
+               {barbeiroPerfil?.nome?.charAt(0).toUpperCase()}
             </div>
-          )
-        )}
+            <div>
+              <p className="font-black uppercase text-lg tracking-tighter" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                {barbeiroPerfil?.nome}
+              </p>
+              <p className="text-[10px] font-black uppercase opacity-50" style={{ color: configCores?.textoSecundario }}>{formatosSel.br}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+            {horariosDaData.length === 0 ? (
+              <p className="text-center text-sm font-bold opacity-50 py-8" style={{ color: configCores?.textoSecundario }}>Barbearia fechada ou sem horários configurados para este dia.</p>
+            ) : !barbeiroTrabalhaHj && horariosFiltrados.length === 0 ? (
+              <p className="text-center text-sm font-bold opacity-50 py-8" style={{ color: configCores?.textoSecundario }}>Você não trabalha neste dia.</p>
+            ) : horariosFiltrados.length === 0 ? (
+              <p className="text-center text-sm font-bold opacity-50 py-8" style={{ color: configCores?.textoSecundario }}>Sem mais horários pendentes hoje.</p>
+            ) : (
+              horariosFiltrados.map(hora => {
+                const ocupado = agendamentosAtivos.find(ag => ag.hora === hora);
+
+                return (
+                  <div key={hora} className="flex justify-between items-center p-4 rounded-2xl transition-all border"
+                        style={{ 
+                          backgroundColor: ocupado ? 'rgba(0,0,0,0.05)' : configCores?.fundo || 'var(--cor-input-bg)',
+                          borderColor: configCores?.borda || 'var(--cor-borda)',
+                          borderLeftWidth: ocupado ? '4px' : '1px',
+                          borderLeftColor: ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
+                        }}>
+                    
+                    <div className="flex items-center gap-4">
+                      <span className="font-black text-lg" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{hora}</span>
+                      
+                      {ocupado && (
+                        <div className="text-left border-l pl-4" style={{ borderColor: configCores?.borda }}>
+                          <p className="font-black uppercase tracking-tighter" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                            {ocupado.clienteNome}
+                          </p>
+                          <p className="text-[10px] font-bold uppercase opacity-60" style={{ color: configCores?.textoSecundario }}>{ocupado.servico}</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {ocupado ? (
+                      <div className="flex items-center gap-2">
+                        <a href={formatarWhatsApp(ocupado.clienteTelefone)} target="_blank" rel="noreferrer" 
+                           className="p-2 rounded-lg hover:brightness-125 transition-all border shadow-sm"
+                           title="Contatar Cliente"
+                           style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
+                          <IconWhatsApp />
+                        </a>
+                        <button 
+                          onClick={() => excluirAgendamento(ocupado.id)} 
+                          title="Cancelar Agendamento"
+                          className="p-2 rounded-lg transition-all border shadow-sm hover:bg-red-500 hover:text-white hover:border-red-500" 
+                          style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        className="text-xs font-black uppercase tracking-widest text-green-500 hover:text-white hover:bg-red-500 px-4 py-2 rounded-xl transition-all border border-green-500/30 hover:border-red-500 cursor-pointer shadow-sm"
+                        onClick={() => bloquearHorarioDaGrade(hora)}
+                        title="Clique para bloquear este horário"
+                      >
+                        Livre
+                      </button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
       </main>
     </div>
   );

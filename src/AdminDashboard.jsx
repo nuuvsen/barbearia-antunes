@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, onSnapshot, query, doc, updateDoc, where, getDocs, getDoc, increment } from 'firebase/firestore'; 
+import { collection, onSnapshot, query, doc, updateDoc, where, getDocs, getDoc, increment, addDoc } from 'firebase/firestore'; 
 import { Search, X, Plus, Clock, CalendarDays } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AdminPagamento from './AdminPagamento'
@@ -176,6 +176,40 @@ export default function AdminDashboard({ totalServicos }) {
     });
   }
 
+  const bloquearHorarioDaGrade = async (hora, nomeBarbeiro) => {
+    Swal.fire({
+      title: 'Bloquear Horário?',
+      text: `Deseja fechar a agenda das ${hora} para ${nomeBarbeiro}?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, bloquear!',
+      cancelButtonText: 'Cancelar',
+      background: configCores?.card || '#ffffff',
+      color: configCores?.texto || '#000000'
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          await addDoc(collection(db, "agendamentos"), {
+            clienteNome: "🔒 HORÁRIO BLOQUEADO",
+            clienteTelefone: "00000000000",
+            servico: "Bloqueio Manual",
+            barbeiro: nomeBarbeiro,
+            data: formatosSel.br,
+            hora: hora,
+            status: "Pendente",
+            tipo: "agendamento"
+          });
+          toast.success("Horário bloqueado com sucesso!");
+        } catch (error) {
+          console.error("Erro ao bloquear:", error);
+          toast.error("Falha ao bloquear horário.");
+        }
+      }
+    });
+  }
+
   const formatarWhatsApp = (numero) => {
   if (!numero) return '#';
   return `https://wa.me/55${String(numero).replace(/\D/g, '')}`;
@@ -198,6 +232,7 @@ export default function AdminDashboard({ totalServicos }) {
 
   const diasSemana = gerarProximosDias();
   const nomesDiasCurto = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  const chavesDiasTrabalho = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 
   const gerarGradeDaData = (dataAlvo) => {
     if (!configAgenda || !configAgenda.horariosPorDia) return []; 
@@ -351,6 +386,12 @@ export default function AdminDashboard({ totalServicos }) {
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {barbeiros.map(b => {
+          const diaSemanaSelecionado = dataSelecionada.getDay();
+          const chaveDia = chavesDiasTrabalho[diaSemanaSelecionado];
+          
+          // Verifica se o barbeiro trabalha neste dia (padrão é true caso o doc não tenha isso configurado ainda)
+          const barbeiroTrabalhaHj = b.diasTrabalho ? b.diasTrabalho[chaveDia] !== false : true;
+
           const agendamentosBarbeiro = proximosClientes.filter(ag => 
             ag.barbeiro === b.nome && 
             ag.status !== 'Cancelado' &&
@@ -359,7 +400,12 @@ export default function AdminDashboard({ totalServicos }) {
 
           const horariosFiltrados = horariosDaData.filter(hora => {
             const ocupado = agendamentosBarbeiro.find(ag => ag.hora === hora);
+            
+            // Sempre mostra se já tem um agendamento gravado (mesmo se for dia de folga do barbeiro)
             if (ocupado) return true; 
+
+            // Se o horário estiver livre, mas o barbeiro não trabalha hoje, remove da grade
+            if (!barbeiroTrabalhaHj) return false;
 
             if (isHoje) {
               const [hSlot, mSlot] = hora.split(':').map(Number);
@@ -388,6 +434,8 @@ export default function AdminDashboard({ totalServicos }) {
               <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
                 {horariosDaData.length === 0 ? (
                   <p className="text-center text-xs font-bold opacity-50 py-4">Barbearia fechada ou sem horários configurados para este dia.</p>
+                ) : !barbeiroTrabalhaHj && horariosFiltrados.length === 0 ? (
+                  <p className="text-center text-xs font-bold opacity-50 py-4">Barbeiro não trabalha neste dia.</p>
                 ) : horariosFiltrados.length === 0 ? (
                   <p className="text-center text-xs font-bold opacity-50 py-4">Sem mais horários pendentes hoje.</p>
                 ) : (
@@ -412,7 +460,12 @@ export default function AdminDashboard({ totalServicos }) {
                              <p className="text-[8px] font-bold uppercase opacity-50">{ocupado.servico}</p>
                           </div>
                         ) : (
-                          <span className="text-[10px] font-black uppercase tracking-widest text-green-500">Livre</span>
+                          <button 
+                            className="text-[10px] font-black uppercase tracking-widest text-green-500 hover:text-green-600 transition-colors"
+                            onClick={() => bloquearHorarioDaGrade(hora, b.nome)}
+                          >
+                            Livre
+                          </button>
                         )}
                       </div>
                     )
