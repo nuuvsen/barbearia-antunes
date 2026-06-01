@@ -9,10 +9,10 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 1. Busca todos os atendimentos concluídos
+    // CORREÇÃO 1: Buscando pela exata string que está no banco ("Concluído")
     const qAtendimentos = query(
       collection(db, "agendamentos"),
-      where("status", "==", "concluido") // (Verifique se no seu banco está "concluido" ou "Concluído")
+      where("status", "==", "Concluído") 
     )
 
     const unsubAtend = onSnapshot(qAtendimentos, (snap) => {
@@ -20,7 +20,6 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
       setAtendimentos(dados)
     })
 
-    // 2. Busca todas as avaliações de NPS (NOVO)
     const qAvaliacoes = query(collection(db, "avaliacoes"))
     
     const unsubAval = onSnapshot(qAvaliacoes, (snap) => {
@@ -35,9 +34,10 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
     }
   }, [])
 
-  // Função para processar os serviços de um barbeiro específico
-  const obterMetricasServicos = (barbeiroId) => {
-    const lista = atendimentos.filter(a => a.barbeiroId === barbeiroId)
+  // CORREÇÃO 2: Agora filtramos pelo NOME do barbeiro, que é como está salvo no banco
+  const obterMetricasServicos = (nomeBarbeiro) => {
+    // Filtramos usando a chave 'barbeiro', que guarda o nome do profissional
+    const lista = atendimentos.filter(a => a.barbeiro === nomeBarbeiro)
     const contagem = {}
 
     lista.forEach(atend => {
@@ -54,7 +54,7 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
     }
   }
 
-  // NOVA FUNÇÃO: Calcula a média e total de avaliações NPS do barbeiro
+  // Calcula a média e total de avaliações NPS do barbeiro
   const obterMetricasAvaliacoes = (nomeBarbeiro) => {
     const listaAvaliacoes = avaliacoes.filter(a => a.barbeiro === nomeBarbeiro)
     
@@ -69,7 +69,7 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
     }
   }
 
-  // NOVA FUNÇÃO: Desenha as 5 estrelas (Cheias, Meias ou Vazias)
+  // Desenha as 5 estrelas (Cheias, Meias ou Vazias)
   const renderizarEstrelas = (media) => {
     const estrelas = []
     const cheias = Math.floor(media)
@@ -96,8 +96,9 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {barbeiros.map(b => {
-            const metrics = obterMetricasServicos(b.id)
-            const nps = obterMetricasAvaliacoes(b.nome) // Puxa as notas pelo NOME do barbeiro
+            // CORREÇÃO: Passando o b.nome ao invés do b.id para bater com os dados da agenda
+            const metrics = obterMetricasServicos(b.nome)
+            const nps = obterMetricasAvaliacoes(b.nome) 
 
             return (
               <div key={b.id} className="p-8 rounded-[3rem] border flex flex-col space-y-6 transition-all hover:scale-[1.01]" 

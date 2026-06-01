@@ -11,25 +11,33 @@ export default function MediaPorBarbeiro({ barbeiros }) {
   // Busca os atendimentos concluídos no Firebase
   useEffect(() => {
     setLoading(true)
-    const agora = new Date()
-    let dataInicio = new Date()
 
-    // Define o range de data baseado no filtro
+    // Pegamos a data atual para formatar igual ao banco (YYYY-MM-DD)
+    const hoje = new Date()
+    const ano = hoje.getFullYear()
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0')
+    const dia = String(hoje.getDate()).padStart(2, '0')
+
+    let dataBusca = ''
+    let operador = '>='
+
+    // Ajusta a string de busca de acordo com o filtro selecionado
     if (filtro === 'dia') {
-      dataInicio.setHours(0, 0, 0, 0)
+      dataBusca = `${ano}-${mes}-${dia}`
+      operador = '==' // Se for dia, a data do banco tem que ser EXATAMENTE igual
     } else if (filtro === 'mes') {
-      dataInicio.setDate(1)
-      dataInicio.setHours(0, 0, 0, 0)
+      dataBusca = `${ano}-${mes}-01`
+      operador = '>=' // Se for mês, pega do dia 01 em diante
     } else if (filtro === 'ano') {
-      dataInicio.setMonth(0, 1)
-      dataInicio.setHours(0, 0, 0, 0)
+      dataBusca = `${ano}-01-01`
+      operador = '>=' // Se for ano, pega do dia 01/01 em diante
     }
 
-    // Query para pegar apenas atendimentos concluídos no período
+    // Query corrigida: Usa o campo "data" (string) ao invés de Timestamp
     const q = query(
       collection(db, "agendamentos"),
-      where("status", "==", "concluido"),
-      where("dataFiltro", ">=", dataInicio) // Certifique-se de salvar um campo 'dataFiltro' como Timestamp no Firebase
+      where("status", "==", "Concluído"),
+      where("data", operador, dataBusca)
     )
 
     const unsub = onSnapshot(q, (snap) => {
@@ -42,8 +50,9 @@ export default function MediaPorBarbeiro({ barbeiros }) {
   }, [filtro])
 
   // Função para calcular estatísticas de cada barbeiro
-  const calcularEstatisticas = (barbeiroId) => {
-    const atendimentosDoBarbeiro = atendimentos.filter(a => a.barbeiroId === barbeiroId)
+  const calcularEstatisticas = (nomeBarbeiro) => {
+    // CORREÇÃO: Compara com a.barbeiro (que tem o NOME) em vez de ID
+    const atendimentosDoBarbeiro = atendimentos.filter(a => a.barbeiro === nomeBarbeiro)
     
     if (atendimentosDoBarbeiro.length === 0) return { principal: 'Nenhum', total: 0 }
 
@@ -94,7 +103,8 @@ export default function MediaPorBarbeiro({ barbeiros }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {barbeiros.map(b => {
-            const stats = calcularEstatisticas(b.id)
+            // CORREÇÃO: Passa o NOME do barbeiro pra função ao invés do ID
+            const stats = calcularEstatisticas(b.nome)
             
             return (
               <div key={b.id} className="p-6 rounded-[2.5rem] border flex flex-col gap-4 transition-all hover:brightness-110" 

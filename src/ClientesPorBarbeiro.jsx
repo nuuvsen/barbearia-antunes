@@ -9,10 +9,10 @@ export default function ClientesPorBarbeiro({ barbeiros }) {
   const [fidelidade, setFidelidade] = useState({})
 
   useEffect(() => {
-    // Busca todos os atendimentos concluídos para calcular a recorrência
+    // CORREÇÃO 1: Busca exatamente "Concluído" (como está no seu banco)
     const q = query(
       collection(db, "agendamentos"),
-      where("status", "==", "concluido")
+      where("status", "==", "Concluído")
     )
 
     const unsub = onSnapshot(q, (snap) => {
@@ -25,30 +25,33 @@ export default function ClientesPorBarbeiro({ barbeiros }) {
   }, [barbeiros])
 
   const processarFidelidade = (dados) => {
-    const mapaClientes = {} // { nomeCliente: { barbeiroId: count } }
+    const mapaClientes = {} // Formato: { nomeCliente: { nomeBarbeiro: count } }
 
     // 1. Agrupar atendimentos por cliente e barbeiro
     dados.forEach(atend => {
-      const cNome = atend.clienteNome || atend.clienteId // Fallback para ID se não tiver nome
-      const bId = atend.barbeiroId
+      const cNome = atend.clienteNome || atend.clienteTelefone || "Cliente Avulso"
+      // CORREÇÃO 2: Pega o campo "barbeiro" (que é o nome) ao invés do barbeiroId
+      const bNome = atend.barbeiro || "Equipe" 
 
       if (!mapaClientes[cNome]) mapaClientes[cNome] = {}
-      mapaClientes[cNome][bId] = (mapaClientes[cNome][bId] || 0) + 1
+      mapaClientes[cNome][bNome] = (mapaClientes[cNome][bNome] || 0) + 1
     })
 
     // 2. Determinar o "Barbeiro Favorito" de cada cliente
     const contagemFidelidade = {}
-    barbeiros.forEach(b => contagemFidelidade[b.id] = 0)
+    
+    // CORREÇÃO 3: Preenchemos o objeto de contagem usando o NOME do barbeiro como chave
+    barbeiros.forEach(b => contagemFidelidade[b.nome] = 0)
 
     Object.values(mapaClientes).forEach(preferencias => {
       // Encontra qual barbeiro tem mais atendimentos para este cliente específico
       const ordenado = Object.entries(preferencias).sort((a, b) => b[1] - a[1])
-      const melhorBarbeiroId = ordenado[0][0]
+      const melhorBarbeiroNome = ordenado[0][0]
       const frequenciaNoMelhor = ordenado[0][1]
 
       // Critério: Ser o favorito e ter pelo menos 2 atendimentos para ser considerado "Fixo"
-      if (contagemFidelidade.hasOwnProperty(melhorBarbeiroId) && frequenciaNoMelhor >= 2) {
-        contagemFidelidade[melhorBarbeiroId]++
+      if (contagemFidelidade.hasOwnProperty(melhorBarbeiroNome) && frequenciaNoMelhor >= 2) {
+        contagemFidelidade[melhorBarbeiroNome]++
       }
     })
 
@@ -75,7 +78,8 @@ export default function ClientesPorBarbeiro({ barbeiros }) {
         </div>
       ) : (
         barbeiros.map(b => {
-          const totalFixos = fidelidade[b.id] || 0
+          // CORREÇÃO 4: Resgatando o total pelo NOME do barbeiro
+          const totalFixos = fidelidade[b.nome] || 0
           const porcentagemBarra = (totalFixos / maxClientesFixos) * 100
 
           return (
