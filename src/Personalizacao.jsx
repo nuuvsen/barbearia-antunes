@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { Save, Palette, Image as ImageIcon, RefreshCcw, LayoutTemplate, CheckCircle2, PlusCircle } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 // Cores padrão do sistema
 const TEMA_PADRAO = {

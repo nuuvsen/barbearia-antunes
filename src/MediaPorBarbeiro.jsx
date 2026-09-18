@@ -34,33 +34,66 @@ export default function MediaPorBarbeiro({ barbeiros }) {
     }
 
     // Query corrigida: Usa o campo "data" (string) ao invés de Timestamp
-    const q = query(
+    const qAgendamentos = query(
       collection(db, "agendamentos"),
       where("status", "==", "Concluído"),
       where("data", operador, dataBusca)
     )
 
-    const unsub = onSnapshot(q, (snap) => {
-      const dados = snap.docs.map(doc => doc.data())
-      setAtendimentos(dados)
+    // Comandas (venda avulsa no balcão) gravam a data em "data" (formato BR, DD/MM/AAAA),
+    // então não dá pra usar o mesmo filtro de intervalo do Firestore que usamos em agendamentos
+    // (que é ISO). Em vez disso, buscamos todas as comandas concluídas (uma única condição de
+    // igualdade, sem precisar de índice composto) e filtramos o período aqui no cliente usando
+    // "dataCriacao" (timestamp ISO, gravado por Comanda.jsx). Sem isso, o desempenho de quem
+    // atende mais por comanda avulsa do que pela agenda ficava invisível nesse painel.
+    const qComandas = query(
+      collection(db, "comandas"),
+      where("status", "==", "Concluído")
+    )
+
+    let agendamentosAtual = []
+    let comandasAtual = []
+
+    const combinarEAtualizar = () => {
+      const comandasNoPeriodo = comandasAtual.filter(c => {
+        if (!c.dataCriacao || !Array.isArray(c.servicos) || c.servicos.length === 0) return false
+        const dataComanda = c.dataCriacao.slice(0, 10) // "AAAA-MM-DD"
+        return operador === '==' ? dataComanda === dataBusca : dataComanda >= dataBusca
+      })
+      setAtendimentos([...agendamentosAtual, ...comandasNoPeriodo])
       setLoading(false)
+    }
+
+    const unsubAgendamentos = onSnapshot(qAgendamentos, (snap) => {
+      agendamentosAtual = snap.docs.map(doc => doc.data())
+      combinarEAtualizar()
     })
 
-    return () => unsub()
+    const unsubComandas = onSnapshot(qComandas, (snap) => {
+      comandasAtual = snap.docs.map(doc => doc.data())
+      combinarEAtualizar()
+    })
+
+    return () => { unsubAgendamentos(); unsubComandas(); }
   }, [filtro])
 
   // Função para calcular estatísticas de cada barbeiro
   const calcularEstatisticas = (nomeBarbeiro) => {
     // CORREÇÃO: Compara com a.barbeiro (que tem o NOME) em vez de ID
     const atendimentosDoBarbeiro = atendimentos.filter(a => a.barbeiro === nomeBarbeiro)
-    
+
     if (atendimentosDoBarbeiro.length === 0) return { principal: 'Nenhum', total: 0 }
 
-    // Conta a frequência de cada tipo de corte
+    // Conta a frequência de cada tipo de corte. Agendamento tem "servico" (string);
+    // comanda tem "servicos" (array — pode ter mais de um serviço na mesma comanda).
     const contagemCortes = {}
     atendimentosDoBarbeiro.forEach(atend => {
-      const nomeCorte = atend.servico || 'Corte Padrão'
-      contagemCortes[nomeCorte] = (contagemCortes[nomeCorte] || 0) + 1
+      const listaServicos = Array.isArray(atend.servicos) && atend.servicos.length > 0
+        ? atend.servicos
+        : [atend.servico || 'Corte Padrão']
+      listaServicos.forEach(nomeCorte => {
+        contagemCortes[nomeCorte] = (contagemCortes[nomeCorte] || 0) + 1
+      })
     })
 
     // Descobre o corte mais frequente

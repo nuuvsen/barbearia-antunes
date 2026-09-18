@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
 import { collection, onSnapshot, query, addDoc } from 'firebase/firestore'; // Removido updateDoc que não é mais usado aqui
 import { X, Plus, Trash2, ShoppingBag, Scissors, User } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
   const [barbeiros, setBarbeiros] = useState([]);

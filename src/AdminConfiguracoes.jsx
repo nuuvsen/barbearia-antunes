@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, getDocs, doc, setDoc, getDoc } from 'firebase/firestore'
-import { 
+import toast from 'react-hot-toast'
+import {
   Percent, Clock, Save, User, Calendar, 
   AlertCircle, Headphones, Palette, Loader2, ChevronDown, Plus, Trash2, CalendarRange, Bot 
 } from 'lucide-react'

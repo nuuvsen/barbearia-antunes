@@ -10,6 +10,7 @@ import {
   Minus, ArrowDownUp, AlertCircle, UploadCloud, AlertTriangle 
 } from 'lucide-react'
 import Swal from 'sweetalert2'
+import toast from 'react-hot-toast'
 
 export default function AdminProdutos() {
   const [produtos, setProdutos] = useState([])
@@ -87,8 +88,14 @@ export default function AdminProdutos() {
 
       // LÓGICA DO IMGBB
       if (arquivoImagem) {
-        const IMGBB_API_KEY = 'f172041aaa9358b02a0ed5e94e90960b'; 
-        
+        // A chave agora vem de uma variável de ambiente (.env, veja .env.example),
+        // em vez de ficar fixa no código-fonte.
+        const IMGBB_API_KEY = import.meta.env.VITE_IMGBB_API_KEY;
+        if (!IMGBB_API_KEY) {
+          toast.error("Chave do ImgBB não configurada (VITE_IMGBB_API_KEY ausente no .env).");
+          return; // o "finally" abaixo já desliga o estado de carregando
+        }
+
         const formData = new FormData();
         formData.append('image', arquivoImagem);
 

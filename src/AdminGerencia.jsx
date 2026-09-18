@@ -102,16 +102,31 @@ export default function AdminGerencia() {
       // 1. Busca TODAS as comandas do mês
       const qComandas = query(collection(db, "comandas"), where("mesReferencia", "==", mesAtual));
       const snapshotComandas = await getDocs(qComandas);
-      
-      const comandas = [];
-      let somaLucroBarbearia = 0; 
+
+      const receitas = [];
+      let somaLucroBarbearia = 0;
       let faturamentoBruto = 0;
 
       snapshotComandas.forEach((doc) => {
         const dados = doc.data();
-        comandas.push({ id: doc.id, ...dados });
-        somaLucroBarbearia += Number(dados.lucroBarbearia || 0); 
+        receitas.push({ id: doc.id, origem: 'comanda', ...dados });
+        somaLucroBarbearia += Number(dados.lucroBarbearia || 0);
         faturamentoBruto += (dados.valorTotal || 0);
+      });
+
+      // 1b. Busca agendamentos concluídos do mês. A comissão e o mês de referência só
+      // são congelados no momento em que o atendimento é concluído (AdminDashboard.jsx) —
+      // agendamentos concluídos ANTES dessa correção não têm esses campos e não entram
+      // aqui (limitação conhecida: não há como preencher retroativamente sem migrar dados).
+      const qAgendamentosMes = query(collection(db, "agendamentos"), where("mesReferencia", "==", mesAtual));
+      const snapshotAgendamentosMes = await getDocs(qAgendamentosMes);
+
+      snapshotAgendamentosMes.forEach((doc) => {
+        const dados = doc.data();
+        if (dados.status !== 'Concluído') return;
+        receitas.push({ id: doc.id, origem: 'agendamento', ...dados });
+        somaLucroBarbearia += Number(dados.lucroBarbearia || 0);
+        faturamentoBruto += Number(dados.valorGerado || 0);
       });
 
       // 2. Busca TODAS as despesas do mês
@@ -126,13 +141,16 @@ export default function AdminGerencia() {
         somaDespesas += Number(dados.valor || 0);
       });
 
-      // 3. Ranking de Serviços
+      // 3. Ranking de Serviços (comanda guarda uma lista de serviços por venda;
+      // agendamento é sempre um serviço só)
       const contagemServicos = {};
-      comandas.forEach(comanda => {
-        if (comanda.servicos && Array.isArray(comanda.servicos)) {
-          comanda.servicos.forEach(servico => {
+      receitas.forEach(r => {
+        if (r.origem === 'comanda' && Array.isArray(r.servicos)) {
+          r.servicos.forEach(servico => {
             contagemServicos[servico] = (contagemServicos[servico] || 0) + 1;
           });
+        } else if (r.origem === 'agendamento' && r.servico) {
+          contagemServicos[r.servico] = (contagemServicos[r.servico] || 0) + 1;
         }
       });
 
@@ -145,7 +163,7 @@ export default function AdminGerencia() {
         totalDespesas: somaDespesas,
         lucroReal: somaLucroBarbearia - somaDespesas,
         servicosRanking: ranking,
-        comandasMes: comandas,
+        comandasMes: receitas, // nome do campo mantido para não quebrar o preview; agora traz os dois tipos
         despesasMes: despesas
       });
     } catch (error) {
@@ -153,15 +171,35 @@ export default function AdminGerencia() {
     }
   }
 
+  // Entende tanto "AAAA-MM-DD" (formato usado pelo agendamento online, em Cliente.jsx)
+  // quanto "DD/MM/AAAA" (formato usado pelas comandas e por bloqueios manuais de horário).
+  // Comparar essas strings direto, sem normalizar, foi a causa de "Faturamento Hoje" e o
+  // ticket médio ficarem sempre zerados para agendamentos feitos pelo site.
+  const normalizarData = (str) => {
+    if (!str) return null;
+    if (str.includes('-')) {
+      const [ano, mes, dia] = str.split('-');
+      if (!ano || !mes || !dia) return null;
+      return { dia, mes, ano };
+    }
+    if (str.includes('/')) {
+      const [dia, mes, ano] = str.split('/');
+      if (!ano || !mes || !dia) return null;
+      return { dia, mes, ano };
+    }
+    return null;
+  };
+
   const calcularRelatorios = async () => {
     const snap = await getDocs(collection(db, "agendamentos"))
-    
-    const todosAgendamentos = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const todosAgendamentos = snap.docs.map(doc => ({ id: doc.id, origem: 'agendamento', ...doc.data() }));
     setAgendamentosDados(todosAgendamentos);
 
-    const hojeStr = new Date().toLocaleDateString('pt-BR');
-    const mesAtual = hojeStr.split('/')[1];
-    const anoAtual = hojeStr.split('/')[2];
+    const snapComandas = await getDocs(collection(db, "comandas"))
+    const todasComandas = snapComandas.docs.map(doc => ({ id: doc.id, origem: 'comanda', ...doc.data() }));
+
+    const hoje = new Date();
+    const hojeNorm = { dia: String(hoje.getDate()).padStart(2, '0'), mes: String(hoje.getMonth() + 1).padStart(2, '0'), ano: String(hoje.getFullYear()) };
 
     let somaHoje = 0
     let somaMes = 0
@@ -177,12 +215,51 @@ export default function AdminGerencia() {
     }
     let agrupamentoBarbeiros = {}
 
+    // Soma um atendimento concluído (de qualquer origem) no ticket médio, na divisão
+    // de recebimento e no desempenho da equipe. A comissão/lucro somados aqui vêm dos
+    // campos já congelados no momento da conclusão/venda (nunca recalculados com a
+    // porcentagem atual do barbeiro), para não misturar dados de épocas diferentes.
+    const registrarNoFinanceiro = (data, valorReal) => {
+      const dNorm = normalizarData(data.data);
+
+      if (dNorm && dNorm.dia === hojeNorm.dia && dNorm.mes === hojeNorm.mes && dNorm.ano === hojeNorm.ano) {
+        somaHoje += valorReal;
+        qtdHoje++;
+      }
+      if (dNorm && dNorm.mes === hojeNorm.mes && dNorm.ano === hojeNorm.ano) {
+        somaMes += valorReal;
+        qtdMes++;
+      }
+
+      const metodo = (data.formaPagamento || data.metodoPagamento || '').toLowerCase()
+      if (metodo.includes('pix')) {
+        financeiroMap.pix.valor += valorReal
+        financeiroMap.pix.qtd++
+      } else if (metodo.includes('dinheiro')) {
+        financeiroMap.dinheiro.valor += valorReal
+        financeiroMap.dinheiro.qtd++
+      } else {
+        financeiroMap.cartao.valor += valorReal
+        financeiroMap.cartao.qtd++
+      }
+
+      const nomeBarbeiro = data.barbeiro || 'Sem Barbeiro'
+      if (!agrupamentoBarbeiros[nomeBarbeiro]) {
+        agrupamentoBarbeiros[nomeBarbeiro] = { quantidade: 0, valorGerado: 0, comissaoTotal: 0, lucroBarbearia: 0 }
+      }
+      agrupamentoBarbeiros[nomeBarbeiro].quantidade += 1
+      agrupamentoBarbeiros[nomeBarbeiro].valorGerado += valorReal
+      agrupamentoBarbeiros[nomeBarbeiro].comissaoTotal += Number(data.comissaoBarbeiro || 0)
+      agrupamentoBarbeiros[nomeBarbeiro].lucroBarbearia += Number(data.lucroBarbearia || 0)
+    }
+
+    // --- AGENDAMENTOS: além do financeiro acima, mantém os contadores de volume,
+    // cancelamento e conversão — métricas do funil de agendamento online, que não
+    // fazem sentido para uma venda de balcão (comanda não tem "cancelado") ---
     todosAgendamentos.forEach(data => {
-      const valStr = data.preco?.toString().replace(/\D/g, '') || '0'
-      const valorReal = parseInt(valStr) / 100 
-      
-      const dataServico = data.data || ""; 
-      const [diaDoc, mesDoc, anoDoc] = dataServico.split('/');
+      const valorReal = Number(
+        data.valorGerado ?? (parseInt(data.preco?.toString().replace(/\D/g, '') || '0', 10) / 100)
+      )
 
       if (data.status === 'Cancelado') {
         totalCancelados++
@@ -190,42 +267,22 @@ export default function AdminGerencia() {
 
       if (data.status === 'Concluído') {
         totalConcluidos++
-        
-        if (dataServico === hojeStr) {
-          somaHoje += valorReal;
-          qtdHoje++;
-        }
-        if (mesDoc === mesAtual && anoDoc === anoAtual) {
-          somaMes += valorReal;
-          qtdMes++;
-        }
-
-        const metodo = (data.formaPagamento || data.metodoPagamento || '').toLowerCase()
-        if (metodo.includes('pix')) {
-          financeiroMap.pix.valor += valorReal
-          financeiroMap.pix.qtd++
-        } else if (metodo.includes('dinheiro')) {
-          financeiroMap.dinheiro.valor += valorReal
-          financeiroMap.dinheiro.qtd++
-        } else {
-          financeiroMap.cartao.valor += valorReal
-          financeiroMap.cartao.qtd++
-        }
-
-        const nomeBarbeiro = data.barbeiro || 'Sem Barbeiro'
-        if (!agrupamentoBarbeiros[nomeBarbeiro]) {
-          agrupamentoBarbeiros[nomeBarbeiro] = { quantidade: 0, valorGerado: 0 }
-        }
-        agrupamentoBarbeiros[nomeBarbeiro].quantidade += 1
-        agrupamentoBarbeiros[nomeBarbeiro].valorGerado += valorReal
+        registrarNoFinanceiro(data, valorReal)
       }
+    })
+
+    // --- COMANDAS: vendas de balcão concluídas entram no financeiro junto com os
+    // agendamentos, mas não no volume/cancelamento (funil diferente) ---
+    todasComandas.forEach(data => {
+      if (data.status !== 'Concluído') return
+      registrarNoFinanceiro(data, Number(data.valorTotal || 0))
     })
 
     const ticketHoje = qtdHoje > 0 ? somaHoje / qtdHoje : 0;
     const ticketMes = qtdMes > 0 ? somaMes / qtdMes : 0;
 
-    setStats({ 
-      faturamento: somaHoje, 
+    setStats({
+      faturamento: somaHoje,
       faturamentoMensal: somaMes,
       ticketMedioHoje: ticketHoje,
       ticketMedioMes: ticketMes,
@@ -342,15 +399,15 @@ export default function AdminGerencia() {
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
               {/* RENDERIZAR RECEITAS (COMANDAS) */}
               {previewInfo === 'receitas' && (
-                visaoGeral.comandasMes.length > 0 ? visaoGeral.comandasMes.map((comanda, idx) => (
+                visaoGeral.comandasMes.length > 0 ? visaoGeral.comandasMes.map((item, idx) => (
                   <div key={idx} className="flex justify-between items-center p-4 rounded-2xl border" style={{ backgroundColor: hexToRgba(cores.fundo, 0.1), borderColor: hexToRgba(cores.borda, 0.1) }}>
                     <div>
-                      <p className="font-bold text-sm uppercase">{comanda.nomeCliente || 'Cliente Avulso'}</p>
-                      <p className="text-[10px] opacity-60 uppercase">{comanda.data} - {comanda.barbeiro}</p>
+                      <p className="font-bold text-sm uppercase">{item.clienteNome || 'Cliente Avulso'}</p>
+                      <p className="text-[10px] opacity-60 uppercase">{item.data} - {item.barbeiro} {item.origem === 'agendamento' ? '· Agenda' : '· Comanda'}</p>
                     </div>
                     <div className="text-right">
-                      <p className="font-black text-blue-500">{formatarMoeda(comanda.valorTotal || 0)}</p>
-                      <p className="text-[10px] font-bold text-green-500 uppercase">Retido: {formatarMoeda(comanda.lucroBarbearia || 0)}</p>
+                      <p className="font-black text-blue-500">{formatarMoeda(item.valorTotal ?? item.valorGerado ?? 0)}</p>
+                      <p className="text-[10px] font-bold text-green-500 uppercase">Retido: {formatarMoeda(item.lucroBarbearia || 0)}</p>
                     </div>
                   </div>
                 )) : <p className="text-center font-bold opacity-50 py-10">Nenhuma receita registrada neste mês.</p>
@@ -627,10 +684,14 @@ export default function AdminGerencia() {
         ) : (
           Object.entries(stats.barbeiros).map(([nomeBarbeiro, dados]) => {
             const barbeiroDb = barbeiros.find(b => b.nome.toLowerCase() === nomeBarbeiro.toLowerCase());
-            const porcentagem = barbeiroDb ? barbeiroDb.comissaoServico : 50; 
-            
-            const valorComissao = (dados.valorGerado * porcentagem) / 100;
-            const liquidoBarbearia = dados.valorGerado - valorComissao;
+            const porcentagem = barbeiroDb ? barbeiroDb.comissaoServico : 50;
+
+            // Comissão e líquido somam os valores já congelados em cada atendimento/comanda
+            // (na % de comissão de quando foi concluído/vendido) — não recalculam com a
+            // porcentagem atual do barbeiro, que pode ter mudado desde então. A badge
+            // "Taxa Retida" abaixo mostra a % atual só como referência.
+            const valorComissao = dados.comissaoTotal;
+            const liquidoBarbearia = dados.lucroBarbearia;
 
             return (
               <div 

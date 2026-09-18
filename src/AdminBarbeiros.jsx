@@ -5,11 +5,12 @@ import {
   collection, getDocs, addDoc, deleteDoc, 
   doc, updateDoc, onSnapshot, serverTimestamp 
 } from 'firebase/firestore'
-import { 
-  Check, X, Calendar, Plus, Lock, 
-  Users, BarChart3, Scissors, UserCircle, 
-  ChevronRight, TrendingUp, Star 
+import {
+  Check, X, Calendar, Plus, Lock,
+  Users, BarChart3, Scissors, UserCircle,
+  ChevronRight, TrendingUp, Star
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 // IMPORTAÇÃO DOS NOVOS COMPONENTES
 import MediaPorBarbeiro from './MediaPorBarbeiro'
@@ -205,7 +206,8 @@ export default function AdminBarbeiros() {
                     <p className="text-[10px] uppercase font-bold tracking-widest mb-1" style={{ color: 'var(--cor-texto-secundario)' }}>
                         {b.idade} Anos • {b.dataInicio}
                     </p>
-                    {b.senhaAcesso && <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-primaria)' }}>PIN: {b.senhaAcesso}</p>}
+                    {/* O PIN não é mais exibido aqui (vazamento de credencial no card do barbeiro).
+                        Ele ainda é necessário para conferência ao editar — veja o modal de edição. */}
                   </div>
                 </div>
 

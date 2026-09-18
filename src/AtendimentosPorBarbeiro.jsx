@@ -9,27 +9,49 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Une agendamentos concluídos (vindos da agenda/site) com comandas concluídas (venda avulsa
+    // no balcão) — antes só agendamentos entravam aqui, então o desempenho de quem trabalha
+    // mais por comanda avulsa do que pela agenda ficava invisível nesse painel.
+    let agendamentosAtual = []
+    let comandasAtual = []
+
+    const combinar = () => {
+      setAtendimentos([...agendamentosAtual, ...comandasAtual])
+      setLoading(false)
+    }
+
     // CORREÇÃO 1: Buscando pela exata string que está no banco ("Concluído")
     const qAtendimentos = query(
       collection(db, "agendamentos"),
-      where("status", "==", "Concluído") 
+      where("status", "==", "Concluído")
     )
 
     const unsubAtend = onSnapshot(qAtendimentos, (snap) => {
-      const dados = snap.docs.map(doc => doc.data())
-      setAtendimentos(dados)
+      agendamentosAtual = snap.docs.map(doc => doc.data())
+      combinar()
+    })
+
+    // Só entram comandas com pelo menos 1 serviço — uma comanda só de produto não é um "corte".
+    const qComandas = query(
+      collection(db, "comandas"),
+      where("status", "==", "Concluído")
+    )
+
+    const unsubComandas = onSnapshot(qComandas, (snap) => {
+      comandasAtual = snap.docs.map(doc => doc.data()).filter(c => Array.isArray(c.servicos) && c.servicos.length > 0)
+      combinar()
     })
 
     const qAvaliacoes = query(collection(db, "avaliacoes"))
-    
+
     const unsubAval = onSnapshot(qAvaliacoes, (snap) => {
       const dados = snap.docs.map(doc => doc.data())
       setAvaliacoes(dados)
-      setLoading(false)
     })
 
     return () => {
       unsubAtend()
+      unsubComandas()
       unsubAval()
     }
   }, [])
@@ -41,8 +63,13 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
     const contagem = {}
 
     lista.forEach(atend => {
-      const nomeServico = atend.servico || "Serviço Padrão"
-      contagem[nomeServico] = (contagem[nomeServico] || 0) + 1
+      // Agendamento tem "servico" (string); comanda tem "servicos" (array — pode ter mais de um).
+      const listaServicos = Array.isArray(atend.servicos) && atend.servicos.length > 0
+        ? atend.servicos
+        : [atend.servico || "Serviço Padrão"]
+      listaServicos.forEach(nomeServico => {
+        contagem[nomeServico] = (contagem[nomeServico] || 0) + 1
+      })
     })
 
     const servicosOrdenados = Object.entries(contagem).sort((a, b) => b[1] - a[1])

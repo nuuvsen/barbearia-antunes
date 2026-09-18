@@ -42,10 +42,17 @@ export default function TicketMedio({ onClose, agendamentos, cores }) {
       const cliente = item.nome || item.cliente || 'Avulso';
       const pagamento = item.formaPagamento || item.metodoPagamento || 'Outro';
       
-      // Data para descobrir o dia da semana
+      // Data para descobrir o dia da semana. O agendamento online (Cliente.jsx) grava em
+      // "AAAA-MM-DD"; bloqueios manuais e comandas gravam em "DD/MM/AAAA" — aceita os dois,
+      // senão a maioria dos agendamentos reais cai sempre em "Indefinido".
       let diaSemana = 'Indefinido';
       if (item.data) {
-        const [dia, mes, ano] = item.data.split('/');
+        let dia, mes, ano;
+        if (item.data.includes('-')) {
+          [ano, mes, dia] = item.data.split('-');
+        } else {
+          [dia, mes, ano] = item.data.split('/');
+        }
         if (dia && mes && ano) {
           const dataObj = new Date(`${ano}-${mes}-${dia}T12:00:00`);
           const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];

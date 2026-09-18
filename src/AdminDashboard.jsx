@@ -95,15 +95,29 @@ export default function AdminDashboard({ totalServicos }) {
   // =========================================================================
   // FUNÇÕES DE AÇÃO 
   // =========================================================================
-  const concluirAtendimentoFinal = async (id) => {
+  const concluirAtendimentoFinal = async (id, dadosPagamento = {}) => {
     try {
       if (!id) {
         toast.error("Erro: ID do atendimento não encontrado.");
         return;
       }
 
+      // Dados vindos do modal de pagamento (AdminPagamento.jsx): forma de recebimento,
+      // desconto aplicado, valor final cobrado e se foi coberto por um plano.
+      // "formaPagamento" é o nome de campo que os relatórios de AdminGerencia.jsx já leem.
+      const { metodo, desconto, valorFinal, isPlano } = dadosPagamento;
+      const dadosFinalizacao = {
+        status: "Concluído",
+        ...(metodo !== undefined && { formaPagamento: metodo }),
+        ...(desconto !== undefined && { desconto }),
+        ...(valorFinal !== undefined && { valorFinal }),
+        ...(isPlano !== undefined && { isPlano }),
+      };
+
       if (agendamentoEmPagamento?.origem === 'comanda') {
-        await updateDoc(doc(db, "comandas", id), { status: "Concluído" });
+        // Comandas já congelam comissão e mês de referência na criação (Comanda.jsx) —
+        // aqui só atualizamos os dados do próprio pagamento (forma, desconto, valor final).
+        await updateDoc(doc(db, "comandas", id), dadosFinalizacao);
 
         if (agendamentoEmPagamento.produtos && agendamentoEmPagamento.produtos.length > 0) {
           for (const prod of agendamentoEmPagamento.produtos) {
@@ -123,7 +137,35 @@ export default function AdminDashboard({ totalServicos }) {
           }
         }
       } else {
-        await updateDoc(doc(db, "agendamentos", id), { status: "Concluído" });
+        // Agendamentos (vindos do site/agenda) nunca tinham comissão congelada.
+        // Calculamos aqui, no momento da conclusão — igual a Comanda.jsx faz na criação —
+        // para os relatórios de Gerência poderem somar agendamentos e comandas juntos
+        // sem recalcular comissão com a porcentagem atual (que pode já ter mudado depois).
+        const dadosBarbeiro = barbeiros.find(b => b.nome === agendamentoEmPagamento?.barbeiro);
+        const taxaServico = (dadosBarbeiro?.comissaoServico ?? 50) / 100;
+
+        let valorBase = 0; // Atendimento coberto por plano não gera valor novo hoje (mesmo comportamento de antes)
+        if (!isPlano) {
+          if (typeof valorFinal === 'number') {
+            valorBase = valorFinal;
+          } else {
+            // Fallback: sem dadosPagamento, tenta extrair da string de preço (ex: "R$ 45,00")
+            const valStr = agendamentoEmPagamento?.preco?.toString().replace(/\D/g, '') || '0';
+            valorBase = parseInt(valStr) / 100;
+          }
+        }
+        const comissaoBarbeiro = valorBase * taxaServico;
+
+        const dataAtual = new Date();
+        const mesReferencia = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
+
+        await updateDoc(doc(db, "agendamentos", id), {
+          ...dadosFinalizacao,
+          valorGerado: valorBase,
+          comissaoBarbeiro,
+          lucroBarbearia: valorBase - comissaoBarbeiro,
+          mesReferencia,
+        });
       }
       
       toast.success("Atendimento concluído e financeiro/estoque atualizados!"); 
@@ -196,7 +238,9 @@ export default function AdminDashboard({ totalServicos }) {
             clienteTelefone: "00000000000",
             servico: "Bloqueio Manual",
             barbeiro: nomeBarbeiro,
-            data: formatosSel.br,
+            // ISO (AAAA-MM-DD), igual ao resto do sistema — antes gravava em formato BR (DD/MM/AAAA),
+            // o que quebrava as buscas por intervalo de data em AdminAgenda.jsx.
+            data: formatosSel.iso,
             hora: hora,
             status: "Pendente",
             tipo: "agendamento"

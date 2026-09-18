@@ -3,6 +3,7 @@ import { db } from './firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { Plus, Trash2, Calendar, TrendingDown, DollarSign, XCircle } from 'lucide-react';
 import Swal from 'sweetalert2'
+import toast from 'react-hot-toast'
 
 export default function AdminDespesas({ onClose }) {
   const [configCores, setConfigCores] = useState(null);

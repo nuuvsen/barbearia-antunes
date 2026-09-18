@@ -160,7 +160,9 @@ export default function PainelBarbeiro() {
             clienteTelefone: "00000000000",
             servico: "Bloqueio Manual",
             barbeiro: barbeiroPerfil.nome,
-            data: getFormatosData(dataSelecionada).br,
+            // ISO (AAAA-MM-DD), igual ao resto do sistema — antes gravava em formato BR (DD/MM/AAAA),
+            // o que quebrava as buscas por intervalo de data em AdminAgenda.jsx.
+            data: getFormatosData(dataSelecionada).iso,
             hora: hora,
             status: "Pendente",
             tipo: "agendamento"

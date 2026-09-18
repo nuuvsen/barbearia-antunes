@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { db } from './firebase'
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
 import { MessageSquare, Send, CheckCircle } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 export default function AdminSuporte() {
   const [mensagem, setMensagem] = useState('')

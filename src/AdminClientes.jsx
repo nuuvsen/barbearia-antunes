@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, getDocs, doc, updateDoc, setDoc, query, where, deleteDoc, writeBatch } from 'firebase/firestore'
 import Swal from 'sweetalert2'
+import toast from 'react-hot-toast'
 
 export default function AdminClientes() {
   const [clientes, setClientes] = useState([])

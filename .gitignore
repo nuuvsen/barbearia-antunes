@@ -25,3 +25,8 @@ dist-ssr
 # Pastas do Electron e Instalador
 release/
 dist-electron/
+
+# Variáveis de ambiente (chaves/segredos) — nunca versionar
+.env
+.env.*
+!.env.example

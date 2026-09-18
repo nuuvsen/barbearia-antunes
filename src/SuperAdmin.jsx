@@ -5,6 +5,7 @@ import {
   onSnapshot, query, orderBy, deleteDoc 
 } from 'firebase/firestore'
 import { ShieldCheck, Users, Save, MessageSquare, Trash2, Clock } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 export default function SuperAdmin() {
   const [limite, setLimite] = useState(1)

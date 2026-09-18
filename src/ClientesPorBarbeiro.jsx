@@ -9,19 +9,39 @@ export default function ClientesPorBarbeiro({ barbeiros }) {
   const [fidelidade, setFidelidade] = useState({})
 
   useEffect(() => {
+    // Une agendamentos concluídos com comandas concluídas (venda avulsa no balcão) — comanda
+    // já grava "clienteNome" e "barbeiro" com os mesmos nomes de campo que agendamento, então
+    // processarFidelidade não precisa saber de onde veio cada atendimento.
+    let agendamentosAtual = []
+    let comandasAtual = []
+
+    const recalcular = () => {
+      processarFidelidade([...agendamentosAtual, ...comandasAtual])
+      setLoading(false)
+    }
+
     // CORREÇÃO 1: Busca exatamente "Concluído" (como está no seu banco)
-    const q = query(
+    const qAgendamentos = query(
       collection(db, "agendamentos"),
       where("status", "==", "Concluído")
     )
 
-    const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(doc => doc.data())
-      processarFidelidade(docs)
-      setLoading(false)
+    const unsubAgendamentos = onSnapshot(qAgendamentos, (snap) => {
+      agendamentosAtual = snap.docs.map(doc => doc.data())
+      recalcular()
     })
 
-    return () => unsub()
+    const qComandas = query(
+      collection(db, "comandas"),
+      where("status", "==", "Concluído")
+    )
+
+    const unsubComandas = onSnapshot(qComandas, (snap) => {
+      comandasAtual = snap.docs.map(doc => doc.data())
+      recalcular()
+    })
+
+    return () => { unsubAgendamentos(); unsubComandas(); }
   }, [barbeiros])
 
   const processarFidelidade = (dados) => {

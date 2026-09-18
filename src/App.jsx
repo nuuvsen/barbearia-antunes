@@ -10,6 +10,7 @@ import Cliente from './Cliente'
 import Admin from './Admin'
 import PainelBarbeiro from './PainelBarbeiro'
 import SuperAdmin from './SuperAdmin'
+import RequireAdminAuth from './RequireAdminAuth'
 
 export default function App() {
   const [servicos, setServicos] = useState([])
@@ -126,9 +127,17 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Cliente servicos={servicos} />} />
-          <Route path="/admin" element={<Admin servicos={servicos} aoMudar={carregarDados} />} />
+          <Route path="/admin" element={
+            <RequireAdminAuth configDoc="acessoAdmin" titulo="Acesso Restrito — Painel Admin">
+              <Admin servicos={servicos} aoMudar={carregarDados} />
+            </RequireAdminAuth>
+          } />
           <Route path="/barbeiro" element={<PainelBarbeiro />} />
-          <Route path="/superadmin" element={<SuperAdmin />} />
+          <Route path="/superadmin" element={
+            <RequireAdminAuth configDoc="superAdmin" titulo="Acesso Restrito — Super Admin">
+              <SuperAdmin />
+            </RequireAdminAuth>
+          } />
         </Routes>
       </BrowserRouter>
     </>
