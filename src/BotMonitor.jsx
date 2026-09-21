@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
+import { BOT_URL } from './botConfig';
 
 export default function BotMonitor() {
   const statusAnterior = useRef(null);
@@ -9,7 +10,7 @@ export default function BotMonitor() {
     const verificarStatus = async () => {
       try {
         // Tenta bater na mesma rota que o seu GerenciadorBot.jsx provavelmente usa
-        const resposta = await fetch('http://localhost:3001/api/bot/status');
+        const resposta = await fetch(`${BOT_URL}/api/bot/status`);
         const dados = await resposta.json();
         const statusAtual = String(dados.status || dados.state || '').toLowerCase();
 

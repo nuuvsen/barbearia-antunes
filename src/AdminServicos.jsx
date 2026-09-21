@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot } from 'firebase/firestore'
+import Swal from 'sweetalert2'
+import toast from 'react-hot-toast'
 
 export default function AdminServicos({ servicos, aoMudar }) {
   const [form, setForm] = useState({ id: null, nome: '', preco: '', tempo: '' })
@@ -75,24 +77,49 @@ export default function AdminServicos({ servicos, aoMudar }) {
     setCarregando(true)
     try {
       if (form.id) {
-        await updateDoc(doc(db, "servicos", form.id), { 
-          nome: form.nome, 
-          preco: form.preco, 
-          tempo: form.tempo 
+        await updateDoc(doc(db, "servicos", form.id), {
+          nome: form.nome,
+          preco: form.preco || "R$ 0,00", // Fallback padronizado (mesmo que na criação)
+          tempo: form.tempo || "30 min"   // Fallback padronizado
         })
+        toast.success("Serviço atualizado com sucesso!")
       } else {
-        await addDoc(collection(db, "servicos"), { 
-          nome: form.nome, 
+        await addDoc(collection(db, "servicos"), {
+          nome: form.nome,
           preco: form.preco || "R$ 0,00", // Fallback padronizado
           tempo: form.tempo || "30 min"   // Fallback padronizado
         })
+        toast.success("Serviço adicionado com sucesso!")
       }
       setForm({ id: null, nome: '', preco: '', tempo: '' })
       aoMudar()
     } catch (error) {
       console.error("Erro:", error)
+      toast.error("Erro ao salvar serviço.")
     } finally {
       setCarregando(false)
+    }
+  }
+
+  const excluirServico = async (servico) => {
+    const resultado = await Swal.fire({
+      title: 'Apagar serviço?',
+      text: `Deseja apagar permanentemente "${servico.nome}"? Ele deixará de aparecer para novos agendamentos.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, apagar!',
+      cancelButtonText: 'Cancelar'
+    })
+    if (resultado.isConfirmed) {
+      try {
+        await deleteDoc(doc(db, "servicos", servico.id))
+        toast.success("Serviço removido com sucesso!")
+        aoMudar()
+      } catch (error) {
+        toast.error("Erro ao remover serviço.")
+      }
     }
   }
 
@@ -147,7 +174,7 @@ export default function AdminServicos({ servicos, aoMudar }) {
                               style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                         ✏️
                       </button>
-                      <button onClick={async () => { if(confirm("Apagar?")) { await deleteDoc(doc(db, "servicos", s.id)); aoMudar(); } }} 
+                      <button onClick={() => excluirServico(s)}
                               className="p-2 rounded-lg transition-all hover:scale-110"
                               style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                         🗑️

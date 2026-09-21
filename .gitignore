@@ -30,3 +30,7 @@ dist-electron/
 .env
 .env.*
 !.env.example
+# Pasta de dev do PWA (gerada automaticamente pelo vite-plugin-pwa em modo dev)
+dev-dist/
+# Itens temporários movidos aqui pra exclusão manual (não são parte do projeto)
+_to_delete/

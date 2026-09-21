@@ -1,21 +1,67 @@
 import { useState, useEffect } from 'react'
-import { auth, db } from './firebase' 
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updatePassword, signOut } from 'firebase/auth' 
-import { 
-  collection, getDocs, addDoc, deleteDoc, 
-  doc, updateDoc, onSnapshot, serverTimestamp 
+import { auth, db, firebaseConfig } from './firebase'
+import { initializeApp, deleteApp } from 'firebase/app'
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, updatePassword } from 'firebase/auth'
+import {
+  collection, getDocs, addDoc, deleteDoc,
+  doc, updateDoc, setDoc, onSnapshot, serverTimestamp,
+  query, where
 } from 'firebase/firestore'
 import {
   Check, X, Calendar, Plus, Lock,
   Users, BarChart3, Scissors, UserCircle,
-  ChevronRight, TrendingUp, Star
+  ChevronRight, TrendingUp, Star, MessageSquareText
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import Swal from 'sweetalert2'
+import { gerarIdTravaHorario, liberarHorario } from './bloqueioUtils'
+
+// Criar ou alterar a senha de acesso de um barbeiro usa createUserWithEmailAndPassword /
+// signInWithEmailAndPassword do Firebase Auth — e essas funções, quando chamadas na
+// instância principal (`auth`), TROCAM automaticamente o usuário logado para o barbeiro
+// que acabou de ser criado/autenticado. Isso derrubava o admin da sessão (ele virava
+// "não autorizado" e era deslogado por RequireAdminAuth) toda vez que um barbeiro novo
+// era cadastrado ou tinha o PIN alterado. A correção: fazer essas operações numa segunda
+// instância isolada do Firebase (mesmo projeto, app secundário), que é descartada logo
+// em seguida — a sessão do admin na instância principal nunca é tocada.
+const executarSemDeslogarAdmin = async (tarefa) => {
+  const appSecundario = initializeApp(firebaseConfig, `barbeiro-auth-${Date.now()}`)
+  try {
+    const authSecundario = getAuth(appSecundario)
+    return await tarefa(authSecundario)
+  } finally {
+    await deleteApp(appSecundario)
+  }
+}
+
+const traduzirErroAuth = (codigo) => {
+  const mapa = {
+    'auth/email-already-in-use': 'Já existe um barbeiro cadastrado com esse nome.',
+    'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
+    'auth/invalid-email': 'Nome inválido para gerar o acesso — use apenas letras.',
+    'auth/wrong-password': 'PIN atual incorreto — não foi possível confirmar a troca.',
+    'auth/invalid-credential': 'PIN atual incorreto — não foi possível confirmar a troca.',
+    'auth/too-many-requests': 'Muitas tentativas seguidas. Aguarde um instante e tente novamente.'
+  }
+  return mapa[codigo] || `Erro: ${codigo}`
+}
 
 // IMPORTAÇÃO DOS NOVOS COMPONENTES
 import MediaPorBarbeiro from './MediaPorBarbeiro'
 import ClientesPorBarbeiro from './ClientesPorBarbeiro'
 import AtendimentosPorBarbeiro from './AtendimentosPorBarbeiro'
+import AdminAvaliacoes from './AdminAvaliacoes'
+
+// Bug encontrado no passeio visual: a data de início (dataInicio, salva como "AAAA-MM-DD")
+// era exibida crua no card, em formato ISO ("2006-06-21") em vez do formato brasileiro
+// ("21/06/2006"). E quando faltava idade e data (barbeiro "Antunes"), o card mostrava
+// "ANOS •" pendurado, com o "•" solto e nada nos dois lados.
+const formatarDataBR = (dataISO) => {
+  if (!dataISO) return ''
+  const [ano, mes, dia] = dataISO.split('-')
+  if (!ano || !mes || !dia) return dataISO
+  return `${dia}/${mes}/${ano}`
+}
 
 const DIAS_DA_SEMANA = [
   { id: 'seg', nome: 'Segunda' }, { id: 'ter', nome: 'Terça' }, { id: 'qua', nome: 'Quarta' },
@@ -49,6 +95,12 @@ export default function AdminBarbeiros() {
     diasTrabalho: agendaInicial 
   })
 
+  // CORES DA PERSONALIZACAO - o modal de Editar/Novo Barbeiro usava var(--cor-input-bg) puro,
+  // que nunca e sobrescrito pelas cores da barbearia (fica sempre escuro), enquanto o texto
+  // ja segue a personalizacao - resultado: texto quase ilegivel sobre fundo escuro. Outros
+  // paineis (AdminServicos.jsx etc.) ja usam configCores.fundo/texto pra evitar isso.
+  const [configCores, setConfigCores] = useState(null)
+
   useEffect(() => {
     const unsubBarbeiros = onSnapshot(collection(db, "barbeiros"), (snap) => {
       setBarbeiros(snap.docs.map(d => ({ id: d.id, ...d.data() })))
@@ -60,7 +112,11 @@ export default function AdminBarbeiros() {
       }
     })
 
-    return () => { unsubBarbeiros(); unsubConfig(); }
+    const unsubCores = onSnapshot(doc(db, "configuracoes", "personalizacao"), (docSnap) => {
+      if (docSnap.exists()) setConfigCores(docSnap.data().cores);
+    })
+
+    return () => { unsubBarbeiros(); unsubConfig(); unsubCores(); }
   }, [])
 
   const solicitarUpgrade = async () => {
@@ -121,25 +177,76 @@ export default function AdminBarbeiros() {
       if (form.id) {
         const barbeiroAtual = barbeiros.find(b => b.id === form.id)
         if (form.senha !== barbeiroAtual.senhaAcesso) {
-          const userCred = await signInWithEmailAndPassword(auth, barbeiroAtual.emailAcesso, barbeiroAtual.senhaAcesso)
-          await updatePassword(userCred.user, form.senha)
-          await signOut(auth)
+          await executarSemDeslogarAdmin(async (authSecundario) => {
+            const userCred = await signInWithEmailAndPassword(authSecundario, barbeiroAtual.emailAcesso, barbeiroAtual.senhaAcesso)
+            await updatePassword(userCred.user, form.senha)
+          })
           dadosBarbeiro.senhaAcesso = form.senha
         } else {
           dadosBarbeiro.senhaAcesso = barbeiroAtual.senhaAcesso
         }
         await updateDoc(doc(db, "barbeiros", form.id), dadosBarbeiro)
+
+        // O nome do barbeiro é gravado por valor (string) em cada agendamento/comanda —
+        // não existe referência por id. Sem esta cascata, renomear um barbeiro (corrigir
+        // um typo, por exemplo) deixava todo o histórico anterior órfão: sumia da própria
+        // agenda dele (PainelBarbeiro.jsx filtra "where barbeiro == nome"), da coluna dele
+        // no Dashboard/Agenda, e o faturamento/comissão de antes do rename ficava preso
+        // num nome que não existe mais em nenhum relatório (Comissões, Gerência, Ticket
+        // Médio) — parecendo receita perdida em vez de só ter mudado de nome.
+        if (barbeiroAtual.nome !== form.nome) {
+          const [snapAgendamentos, snapComandas] = await Promise.all([
+            getDocs(query(collection(db, "agendamentos"), where("barbeiro", "==", barbeiroAtual.nome))),
+            getDocs(query(collection(db, "comandas"), where("barbeiro", "==", barbeiroAtual.nome)))
+          ]);
+          const atualizacoes = [
+            ...snapAgendamentos.docs.map(d => updateDoc(doc(db, "agendamentos", d.id), { barbeiro: form.nome })),
+            ...snapComandas.docs.map(d => updateDoc(doc(db, "comandas", d.id), { barbeiro: form.nome }))
+          ];
+          if (atualizacoes.length > 0) await Promise.all(atualizacoes);
+
+          // Bug real encontrado (interação com a trava de horário anti-double-booking):
+          // agendamentos e bloqueios Pendentes/Bloqueados guardam uma "trava" de horário
+          // (ver bloqueioUtils.js) cujo ID é baseado no NOME do barbeiro. Só renomear o
+          // campo "barbeiro" no agendamento, sem migrar a trava, deixaria a trava antiga
+          // (com o nome velho) travada para sempre — nenhum cancelamento futuro a
+          // encontraria mais para liberar, "perdendo" aquele horário permanentemente.
+          const paraMigrarTrava = snapAgendamentos.docs.filter(d => {
+            const status = d.data().status;
+            return status === 'Pendente' || status === 'Bloqueado';
+          });
+          if (paraMigrarTrava.length > 0) {
+            await Promise.all(paraMigrarTrava.map(async d => {
+              const dados = d.data();
+              await liberarHorario(barbeiroAtual.nome, dados.data, dados.hora);
+              await setDoc(doc(db, "travasHorario", gerarIdTravaHorario(form.nome, dados.data, dados.hora)), {
+                barbeiro: form.nome,
+                data: dados.data,
+                hora: dados.hora,
+                colecao: "agendamentos",
+                agendamentoId: d.id,
+                criadoEm: new Date().toISOString()
+              });
+            }));
+          }
+        }
+
+        toast.success("Barbeiro atualizado com sucesso!")
       } else {
         const emailFicticio = `${form.nome.toLowerCase().replace(/\s/g, '')}@antunes.com`
-        const credencial = await createUserWithEmailAndPassword(auth, emailFicticio, form.senha)
-        dadosBarbeiro.uid = credencial.user.uid
+        const uid = await executarSemDeslogarAdmin(async (authSecundario) => {
+          const credencial = await createUserWithEmailAndPassword(authSecundario, emailFicticio, form.senha)
+          return credencial.user.uid
+        })
+        dadosBarbeiro.uid = uid
         dadosBarbeiro.emailAcesso = emailFicticio
-        dadosBarbeiro.senhaAcesso = form.senha 
+        dadosBarbeiro.senhaAcesso = form.senha
         await addDoc(collection(db, "barbeiros"), dadosBarbeiro)
+        toast.success("Barbeiro cadastrado com sucesso!")
       }
       fecharModal()
     } catch (error) {
-      setErro(`Erro: ${error.code}`)
+      setErro(traduzirErroAuth(error.code))
     } finally { setCarregando(false) }
   }
 
@@ -164,6 +271,7 @@ export default function AdminBarbeiros() {
             { id: 'media', label: 'Médias', icon: Star },
             { id: 'clientes', label: 'Clientes', icon: Users },
             { id: 'atendimentos', label: 'Atendimentos', icon: Scissors },
+            { id: 'avaliacoes', label: 'Avaliações', icon: MessageSquareText },
           ].map((item) => (
             <button 
               key={item.id}
@@ -188,7 +296,15 @@ export default function AdminBarbeiros() {
              </p>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* BUG ENCONTRADO NO PASSEIO VISUAL: "md:grid-cols-2 lg:grid-cols-3" decide o número
+              de colunas só pela largura da JANELA, sem saber que o painel admin sempre reserva
+              espaço pra sidebar. Numa janela um pouco mais estreita (ex: ~800px, comum em
+              notebook menor ou navegador não maximizado) o breakpoint "md" já força 2 colunas,
+              cada uma com menos de 190px — não cabe avatar (64px) + nome, e o nome do barbeiro
+              trunca pra 1 letra ("S...", "BE...", "A..."). Troquei pra um grid que decide o
+              número de colunas pelo espaço realmente disponível (nunca menos de 260px por
+              cartão), então ele nunca fica pequeno demais pro conteúdo. */}
+          <div className="grid gap-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
             {barbeiros.map(b => (
               <div key={b.id} className="p-6 rounded-3xl border flex flex-col justify-between gap-6 group transition-all hover:brightness-125 shadow-sm"
                    style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
@@ -204,7 +320,7 @@ export default function AdminBarbeiros() {
                         {b.nome}
                     </p>
                     <p className="text-[10px] uppercase font-bold tracking-widest mb-1" style={{ color: 'var(--cor-texto-secundario)' }}>
-                        {b.idade} Anos • {b.dataInicio}
+                        {[b.idade ? `${b.idade} Anos` : null, formatarDataBR(b.dataInicio) || null].filter(Boolean).join(' • ')}
                     </p>
                     {/* O PIN não é mais exibido aqui (vazamento de credencial no card do barbeiro).
                         Ele ainda é necessário para conferência ao editar — veja o modal de edição. */}
@@ -232,7 +348,26 @@ export default function AdminBarbeiros() {
                             style={{ backgroundColor: 'var(--cor-bg-botao)', color: 'var(--cor-texto-principal)' }}>
                       ✏️
                     </button>
-                    <button onClick={async () => { if(confirm("Remover da equipe?")) { await deleteDoc(doc(db, "barbeiros", b.id)); } }} 
+                    <button onClick={async () => {
+                      const resultado = await Swal.fire({
+                        title: 'Remover barbeiro?',
+                        text: `Deseja remover ${b.nome} da equipe? O acesso ao painel dele será revogado.`,
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonColor: '#d33',
+                        cancelButtonColor: '#3085d6',
+                        confirmButtonText: 'Sim, remover!',
+                        cancelButtonText: 'Cancelar'
+                      })
+                      if (resultado.isConfirmed) {
+                        try {
+                          await deleteDoc(doc(db, "barbeiros", b.id))
+                          toast.success("Barbeiro removido da equipe.")
+                        } catch (e) {
+                          toast.error("Erro ao remover barbeiro.")
+                        }
+                      }
+                    }}
                             className="flex-1 py-2.5 rounded-xl transition-all flex justify-center items-center hover:brightness-125"
                             style={{ backgroundColor: 'var(--cor-bg-botao)', color: 'var(--cor-texto-principal)' }}>
                       🗑️
@@ -268,6 +403,7 @@ export default function AdminBarbeiros() {
       {secao === 'media' && <MediaPorBarbeiro barbeiros={barbeiros} />}
       {secao === 'clientes' && <ClientesPorBarbeiro barbeiros={barbeiros} />}
       {secao === 'atendimentos' && <AtendimentosPorBarbeiro barbeiros={barbeiros} />}
+      {secao === 'avaliacoes' && <AdminAvaliacoes barbeiros={barbeiros} />}
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
@@ -289,13 +425,13 @@ export default function AdminBarbeiros() {
                   <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Nome Completo</label>
                   <input required type="text" value={form.nome} onChange={e => setForm({...form, nome: e.target.value})}
                          className="w-full px-6 py-4 rounded-2xl border outline-none transition-all focus:ring-2"
-                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)', '--tw-ring-color': 'var(--cor-primaria)' }} />
+                         style={{ backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)', '--tw-ring-color': 'var(--cor-primaria)' }} />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Idade</label>
                   <input required type="number" value={form.idade} onChange={e => setForm({...form, idade: e.target.value})}
                          className="w-full px-6 py-4 rounded-2xl border outline-none"
-                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                         style={{ backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }} />
                 </div>
               </div>
 
@@ -304,14 +440,14 @@ export default function AdminBarbeiros() {
                   <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Data de Início</label>
                   <input required type="date" value={form.dataInicio} onChange={e => setForm({...form, dataInicio: e.target.value})}
                          className="w-full px-6 py-4 rounded-2xl border outline-none"
-                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                         style={{ backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }} />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Senha de Acesso (PIN)</label>
                   <input required type="password" value={form.senha} onChange={e => setForm({...form, senha: e.target.value})}
                          placeholder="Mínimo 6 caracteres"
                          className="w-full px-6 py-4 rounded-2xl border outline-none"
-                         style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                         style={{ backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }} />
                 </div>
               </div>
 
@@ -319,7 +455,7 @@ export default function AdminBarbeiros() {
                 <label className="text-[10px] font-black uppercase tracking-widest ml-4 opacity-50">Instagram (sem @)</label>
                 <input type="text" value={form.instagram} onChange={e => setForm({...form, instagram: e.target.value})}
                        className="w-full px-6 py-4 rounded-2xl border outline-none"
-                       style={{ backgroundColor: 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                       style={{ backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', borderColor: 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }} />
               </div>
 
               <div className="space-y-4">
@@ -348,7 +484,7 @@ export default function AdminBarbeiros() {
               <div className="flex gap-4 pt-4">
                 <button type="button" onClick={fecharModal}
                         className="flex-1 py-4 rounded-2xl font-black uppercase text-xs tracking-widest"
-                        style={{ backgroundColor: 'var(--cor-input-bg)', color: 'var(--cor-texto-principal)' }}>
+                        style={{ backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                   Cancelar
                 </button>
                 <button type="submit" disabled={carregando}

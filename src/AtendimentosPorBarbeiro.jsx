@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import { Scissors, TrendingUp, Award, PieChart, Star, StarHalf } from 'lucide-react'
+import Carregando from './Carregando'
 
 export default function AtendimentosPorBarbeiro({ barbeiros }) {
   const [atendimentos, setAtendimentos] = useState([])
@@ -117,9 +118,7 @@ export default function AtendimentosPorBarbeiro({ barbeiros }) {
     <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
       
       {loading ? (
-        <div className="py-20 text-center font-black uppercase text-xs tracking-widest opacity-40">
-          Carregando histórico e avaliações...
-        </div>
+        <Carregando tela={false} label="Carregando histórico e avaliações..." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {barbeiros.map(b => {

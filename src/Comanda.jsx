@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import AutocompleteCliente from './AutocompleteCliente';
 import { db } from './firebase';
 import { collection, onSnapshot, query, addDoc } from 'firebase/firestore'; // Removido updateDoc que não é mais usado aqui
 import { X, Plus, Trash2, ShoppingBag, Scissors, User } from 'lucide-react';
@@ -12,6 +13,9 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
   // Estado da Comanda
   const [barbeiroSelecionado, setBarbeiroSelecionado] = useState('');
   const [clienteNome, setClienteNome] = useState('');
+  const [clienteTelefone, setClienteTelefone] = useState('');
+  const [clientesCadastrados, setClientesCadastrados] = useState([]);
+  const nomeVinculadoRef = useRef(''); // nome ao qual o clienteTelefone atual pertence de fato
   const [itensSelecionados, setItensSelecionados] = useState([]);
 
   // 1. Carregar dados do Firebase
@@ -25,10 +29,23 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
     const unsubP = onSnapshot(query(collection(db, "produtos")), (snap) => {
       setProdutosDisponiveis(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    return () => { unsubB(); unsubS(); unsubP(); };
+    // Clientes já cadastrados (doc.id = telefone) — alimenta as sugestões de autocomplete
+    // do campo "Nome do Cliente", pra não precisar digitar o nome inteiro toda vez.
+    const unsubC = onSnapshot(query(collection(db, "clientes")), (snap) => {
+      setClientesCadastrados(snap.docs.map(d => ({ telefone: d.id, nome: d.data().nome || '' })));
+    });
+    return () => { unsubB(); unsubS(); unsubP(); unsubC(); };
   }, []);
 
   const adicionarItem = (item, tipo) => {
+    if (tipo === 'produto') {
+      const jaNaComanda = itensSelecionados.filter(i => i.tipo === 'produto' && i.id === item.id).length;
+      const estoqueDisponivel = Number(item.estoque || 0);
+      if (jaNaComanda >= estoqueDisponivel) {
+        toast.error(`Estoque insuficiente de "${item.nome}" (${estoqueDisponivel} ${estoqueDisponivel === 1 ? 'disponível' : 'disponíveis'}).`);
+        return;
+      }
+    }
     setItensSelecionados([...itensSelecionados, { ...item, tipo, idInstancia: Date.now() }]);
   };
 
@@ -50,15 +67,15 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
 
   const handleFinalizarComanda = async () => {
     if (!clienteNome.trim()) {
-      toast("Por favor, digite o nome do cliente.");
+      toast.error("Por favor, digite o nome do cliente.");
       return;
     }
     if (!barbeiroSelecionado) {
-      toast("Por favor, selecione um barbeiro.");
+      toast.error("Por favor, selecione um barbeiro.");
       return;
     }
     if (itensSelecionados.length === 0) {
-      toast("Adicione pelo menos um serviço ou produto.");
+      toast.error("Adicione pelo menos um serviço ou produto.");
       return;
     }
 
@@ -103,6 +120,7 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
 
       const novaComanda = {
         clienteNome: clienteNome,
+        clienteTelefone: clienteTelefone || null,
         barbeiro: barbeiroSelecionado,
         servico: listaServicos.join(', ') || 'Nenhum',
         produtosString: listaProdutos.join(', ') || 'Nenhum',
@@ -162,13 +180,32 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
           <div className="space-y-4 mb-8">
             <div>
               <label className="text-[10px] font-black uppercase opacity-50 ml-2">Nome do Cliente</label>
-              <input 
-                type="text" 
-                value={clienteNome}
-                onChange={(e) => setClienteNome(e.target.value)}
+              <AutocompleteCliente
+                clientes={clientesCadastrados}
+                valor={clienteNome}
                 placeholder="Ex: João Silva"
-                className="w-full p-4 rounded-2xl border outline-none font-bold focus:ring-2 transition-all"
-                style={{ borderColor: configCores?.borda, ringColor: configCores?.primaria }}
+                onChangeTexto={(texto) => {
+                  setClienteNome(texto);
+                  // Se o nome digitado deixou de bater com o cliente selecionado antes,
+                  // o telefone que tínhamos preenchido não pertence mais a esse nome.
+                  if (nomeVinculadoRef.current && texto !== nomeVinculadoRef.current) {
+                    setClienteTelefone('');
+                    nomeVinculadoRef.current = '';
+                  }
+                }}
+                onSelecionar={(cliente) => {
+                  setClienteNome(cliente.nome);
+                  setClienteTelefone(cliente.telefone || '');
+                  nomeVinculadoRef.current = cliente.nome;
+                }}
+                inputClassName="w-full p-4 rounded-2xl border outline-none font-bold focus:ring-2 transition-all"
+                inputStyle={{ borderColor: configCores?.borda, ringColor: configCores?.primaria }}
+                dropdownStyle={{
+                  backgroundColor: configCores?.card || '#ffffff',
+                  borderColor: configCores?.borda || '#eeeeee',
+                  color: configCores?.texto || '#111827',
+                }}
+                itemHoverStyle={{ backgroundColor: `${configCores?.primaria || '#16a34a'}1a` }}
               />
             </div>
 
@@ -205,13 +242,21 @@ export default function Comanda({ onClose, onAbrirPagamento, configCores }) {
             <ShoppingBag size={16} /> Produtos
           </h3>
           <div className="grid grid-cols-2 gap-2">
-            {produtosDisponiveis.map(p => (
-              <button key={p.id} onClick={() => adicionarItem(p, 'produto')}
-                className="p-3 text-left border rounded-xl hover:brightness-90 active:scale-95 transition-all">
-                <p className="text-xs font-black truncate">{p.nome}</p>
-                <p className="text-[10px] font-bold text-blue-600">R$ {p.preco}</p>
-              </button>
-            ))}
+            {produtosDisponiveis.map(p => {
+              const jaNaComanda = itensSelecionados.filter(i => i.tipo === 'produto' && i.id === p.id).length;
+              const esgotado = jaNaComanda >= Number(p.estoque || 0);
+              return (
+                <button key={p.id} onClick={() => adicionarItem(p, 'produto')}
+                  disabled={esgotado}
+                  className={`p-3 text-left border rounded-xl transition-all ${esgotado ? 'opacity-40 cursor-not-allowed' : 'hover:brightness-90 active:scale-95'}`}>
+                  <p className="text-xs font-black truncate">{p.nome}</p>
+                  <p className="text-[10px] font-bold text-blue-600">R$ {p.preco}</p>
+                  <p className="text-[9px] font-bold uppercase mt-0.5" style={{ color: esgotado ? '#ef4444' : 'inherit', opacity: esgotado ? 1 : 0.4 }}>
+                    {esgotado ? 'Esgotado' : `${Number(p.estoque || 0) - jaNaComanda} em estoque`}
+                  </p>
+                </button>
+              );
+            })}
           </div>
         </div>
 

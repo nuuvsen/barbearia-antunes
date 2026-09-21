@@ -34,3 +34,81 @@ body {
   color: var(--cor-texto-principal);
   transition: background-color 0.3s ease, color 0.3s ease;
 }
+
+/* ============================================================
+   UTILITÁRIOS DE ANIMAÇÃO DE ENTRADA (animate-in / fade-in / zoom-in /
+   slide-in-from-* / duration-* / ease-*)
+
+   Bug real encontrado: essas classes já eram usadas em dezenas de lugares
+   no app (modais, telas de carregamento, calendários, etc. — mais de 50
+   ocorrências), mas o Tailwind v4 não inclui o plugin "tailwindcss-animate"
+   por padrão, e nada aqui definia essas classes. Ou seja: toda essa
+   "animação" sempre foi um no-op silencioso — os elementos apareciam de
+   golpe, sem nenhuma transição visível, em todo o site.
+
+   Implementação abaixo replica a técnica do tailwindcss-animate (variáveis
+   CSS por classe + uma única @keyframes "enter" compartilhada), cobrindo
+   exatamente as combinações usadas no projeto hoje. Convive em paz com as
+   classes nativas do Tailwind (ex: "duration-300", "ease-out") porque elas
+   mexem em "transition-*" enquanto as classes abaixo mexem em "animation-*"
+   — propriedades diferentes, sem conflito de cascata.
+   ============================================================ */
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+      scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), var(--tw-enter-scale, 1));
+  }
+}
+
+/* IMPORTANTE: animation-fill-mode é "backwards", não "both"/"forwards".
+   Bug real encontrado (modal "Editar Barbeiro" e outros aparecendo fora do
+   lugar, ancorados no canto em vez de centralizados na tela): com
+   "forwards" (que "both" inclui), o navegador mantém a propriedade
+   "transform" sob controle da animação PARA SEMPRE depois que ela termina
+   — mesmo quando o valor final é visualmente idêntico a "nenhuma
+   transformação" (translate/scale zerados), o computed style fica como
+   uma matriz "ativa" (ex: matrix(1,0,0,1,0,0)) em vez do valor "none".
+   Qualquer elemento com transform ativo (mesmo essa matriz identidade)
+   vira um novo "containing block" para descendentes "position: fixed" —
+   ou seja, TODO modal fixed dentro de um wrapper .animate-in (e há vários
+   no app: o wrapper de troca de aba no Admin.jsx e o wrapper raiz de cada
+   tela Admin*.jsx) passava a se posicionar relativo a esse wrapper em vez
+   do viewport real, cortando/deslocando o modal e deixando uma área cinza
+   sem overlay. "backwards" mantém o efeito visual de entrada idêntico
+   (a animação roda normalmente), mas libera a propriedade de volta pro
+   CSS normal assim que termina, voltando a computar como "none" de
+   verdade — resolvendo o bug para todos os modais do app de uma vez. */
+.animate-in {
+  animation-name: enter;
+  animation-duration: 150ms;
+  animation-fill-mode: backwards;
+  --tw-enter-opacity: initial;
+  --tw-enter-scale: initial;
+  --tw-enter-translate-x: initial;
+  --tw-enter-translate-y: initial;
+}
+
+.fade-in { --tw-enter-opacity: 0; }
+
+.zoom-in { --tw-enter-scale: 0; }
+.zoom-in-95 { --tw-enter-scale: .95; }
+
+.slide-in-from-top { --tw-enter-translate-y: -100%; }
+.slide-in-from-bottom { --tw-enter-translate-y: 100%; }
+.slide-in-from-left { --tw-enter-translate-x: -100%; }
+.slide-in-from-right { --tw-enter-translate-x: 100%; }
+
+.slide-in-from-top-4 { --tw-enter-translate-y: -1rem; }
+.slide-in-from-bottom-2 { --tw-enter-translate-y: .5rem; }
+.slide-in-from-bottom-4 { --tw-enter-translate-y: 1rem; }
+.slide-in-from-bottom-12 { --tw-enter-translate-y: 3rem; }
+.slide-in-from-right-4 { --tw-enter-translate-x: 1rem; }
+
+.duration-200 { animation-duration: 200ms; }
+.duration-300 { animation-duration: 300ms; }
+.duration-500 { animation-duration: 500ms; }
+.duration-1000 { animation-duration: 1000ms; }
+
+.ease-in { animation-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+.ease-out { animation-timing-function: cubic-bezier(0, 0, 0.2, 1); }

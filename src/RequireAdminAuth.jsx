@@ -66,7 +66,10 @@ export default function RequireAdminAuth({ children, configDoc, titulo }) {
   }
 
   if (status === 'autorizado') {
-    return children
+    // Fragment em vez de devolver "children" cru: assim funciona tanto com um único filho
+    // quanto com vários (ex: <BotMonitor /> + <Admin ... /> juntos na mesma rota) sem o
+    // React reclamar de "key" faltando numa lista.
+    return <>{children}</>
   }
 
   if (status === 'carregando') {

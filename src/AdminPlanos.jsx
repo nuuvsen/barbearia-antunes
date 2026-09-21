@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore'
+import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
+import Swal from 'sweetalert2'
+import toast from 'react-hot-toast'
+import { BOT_URL } from './botConfig'
 
 export default function AdminPlanos() {
   const [planos, setPlanos] = useState([])
@@ -32,6 +35,7 @@ export default function AdminPlanos() {
   })
   
   const [novoCombo, setNovoCombo] = useState({ nome: '', tempo: '' })
+  const [solicitacoes, setSolicitacoes] = useState([])
 
   const carregarDados = async () => {
     try {
@@ -61,9 +65,26 @@ export default function AdminPlanos() {
 
   useEffect(() => { carregarDados() }, [])
 
+  // Escuta em tempo real as solicitações de assinatura que os clientes fazem pela
+  // vitrine de planos (Cliente.jsx → "Assinaturas"). Cada uma fica "Pendente" até o
+  // cliente vir na loja e o admin finalizar (ou recusar) por aqui.
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "solicitacoesPlanos"), (snap) => {
+      const lista = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(s => s.status === 'Pendente')
+      lista.sort((a, b) => new Date(a.dataCriacao) - new Date(b.dataCriacao))
+      setSolicitacoes(lista)
+    })
+    return () => unsub()
+  }, [])
+
   const salvar = async (e) => {
     e.preventDefault()
-    if (!form.nome || !form.valor) return
+    if (!form.nome || !form.valor) {
+      toast.error("Preencha ao menos o nome e o valor do plano.")
+      return
+    }
 
     const dadosPlanos = {
       nome: form.nome,
@@ -71,24 +92,148 @@ export default function AdminPlanos() {
       cortes: form.cortes,
       validadeDias: Number(form.validadeDias) || 0, // <--- SALVA NO BANCO
       status: form.status,
-      servicosInclusos: form.servicosInclusos,
-      combos: form.combos 
+      servicosInclusos: form.servicosInclusos || [],
+      combos: form.combos || []
     }
 
-    if (form.id) {
-      await updateDoc(doc(db, "planos", form.id), dadosPlanos)
-    } else {
-      await addDoc(collection(db, "planos"), dadosPlanos)
+    try {
+      if (form.id) {
+        await updateDoc(doc(db, "planos", form.id), dadosPlanos)
+        toast.success("Plano atualizado com sucesso!")
+      } else {
+        await addDoc(collection(db, "planos"), dadosPlanos)
+        toast.success("Plano criado com sucesso!")
+      }
+      setForm({ id: null, nome: '', valor: '', cortes: '', validadeDias: '', status: 'Ativo', servicosInclusos: [], combos: [] })
+      carregarDados()
+    } catch (erro) {
+      console.error("Erro ao salvar plano:", erro)
+      toast.error("Erro ao salvar plano.")
     }
-
-    setForm({ id: null, nome: '', valor: '', cortes: '', validadeDias: '', status: 'Ativo', servicosInclusos: [], combos: [] })
-    carregarDados()
   }
 
   const alternarStatus = async (plano) => {
     const novoStatus = plano.status === 'Ativo' ? 'Inativo' : 'Ativo'
-    await updateDoc(doc(db, "planos", plano.id), { status: novoStatus })
-    carregarDados()
+    try {
+      await updateDoc(doc(db, "planos", plano.id), { status: novoStatus })
+      toast.success(`Plano ${novoStatus === 'Ativo' ? 'ativado' : 'desativado'} com sucesso!`)
+      carregarDados()
+    } catch (erro) {
+      toast.error("Erro ao alterar status do plano.")
+    }
+  }
+
+  const iniciarEdicao = (plano) => {
+    setForm({
+      ...plano,
+      servicosInclusos: plano.servicosInclusos || [],
+      combos: plano.combos || []
+    })
+  }
+
+  const excluirPlano = async (plano) => {
+    const resultado = await Swal.fire({
+      title: 'Apagar plano?',
+      text: `Deseja apagar permanentemente o plano "${plano.nome}"? Clientes que já têm esse plano continuarão com os créditos atuais, mas o plano some da lista de opções.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, apagar!',
+      cancelButtonText: 'Cancelar'
+    })
+    if (resultado.isConfirmed) {
+      try {
+        await deleteDoc(doc(db, "planos", plano.id))
+        toast.success("Plano removido com sucesso!")
+        carregarDados()
+      } catch (erro) {
+        toast.error("Erro ao remover plano.")
+      }
+    }
+  }
+
+  // Ativa de fato o plano pro cliente (mesma lógica de atribuição usada em
+  // AdminClientes.jsx → aoMudarPlano): cria/atualiza o doc em "clientes" com o
+  // plano, os créditos e a data limite, e marca a solicitação como concluída.
+  const finalizarSolicitacao = async (sol) => {
+    const planoDaSolicitacao = planos.find(p => p.id === sol.planoId)
+
+    const confirmar = await Swal.fire({
+      title: 'Finalizar assinatura?',
+      html: `Confirma que <b>${sol.nome}</b> (${sol.telefone}) já veio na loja e pagou o plano <b>${sol.planoNome}</b>? Isso vai ativar o plano na ficha dele(a).`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Sim, ativar!',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#16a34a',
+      cancelButtonColor: '#3085d6'
+    })
+    if (!confirmar.isConfirmed) return
+
+    try {
+      let novaDataLimite = null
+      if (planoDaSolicitacao?.validadeDias && Number(planoDaSolicitacao.validadeDias) > 0) {
+        const d = new Date()
+        d.setDate(d.getDate() + Number(planoDaSolicitacao.validadeDias))
+        novaDataLimite = d.toISOString().split('T')[0]
+      }
+
+      const telefoneLimpo = sol.telefone.trim()
+      await setDoc(doc(db, "clientes", telefoneLimpo), {
+        nome: sol.nome,
+        telefone: telefoneLimpo,
+        planoId: sol.planoId,
+        planoNome: sol.planoNome,
+        cortesRestantes: planoDaSolicitacao ? Number(planoDaSolicitacao.cortes) : 0,
+        dataLimite: novaDataLimite
+      }, { merge: true })
+
+      await updateDoc(doc(db, "solicitacoesPlanos", sol.id), {
+        status: 'Concluida',
+        dataConclusao: new Date().toISOString()
+      })
+
+      toast.success(`Assinatura de ${sol.nome} ativada com sucesso!`)
+
+      // Avisa o cliente por notificação push (não trava o fluxo se falhar — o plano já
+      // foi ativado de verdade no passo acima, isso aqui é só o aviso).
+      fetch(`${BOT_URL}/api/notificacoes/enviar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destino: 'cliente',
+          identificador: telefoneLimpo,
+          titulo: 'Assinatura Ativada! 🎉',
+          corpo: `Seu plano ${sol.planoNome} já está ativo. Aproveite!`
+        })
+      }).catch(erro => console.error('Erro ao notificar cliente:', erro))
+    } catch (erro) {
+      console.error("Erro ao finalizar solicitação:", erro)
+      toast.error("Erro ao ativar a assinatura.")
+    }
+  }
+
+  const recusarSolicitacao = async (sol) => {
+    const confirmar = await Swal.fire({
+      title: 'Recusar solicitação?',
+      text: `O plano de ${sol.nome} NÃO será ativado. Use isso se o cliente desistiu ou não apareceu.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sim, recusar',
+      cancelButtonText: 'Voltar',
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6'
+    })
+    if (!confirmar.isConfirmed) return
+
+    try {
+      await updateDoc(doc(db, "solicitacoesPlanos", sol.id), { status: 'Cancelada' })
+      toast.success("Solicitação recusada.")
+    } catch (erro) {
+      console.error("Erro ao recusar solicitação:", erro)
+      toast.error("Erro ao recusar solicitação.")
+    }
   }
 
   const toggleServico = (nome) => {
@@ -133,6 +278,59 @@ export default function AdminPlanos() {
       >
         Gestão de <span style={{ color: cores.primaria }}>Planos</span>
       </h1>
+
+      {/* SOLICITAÇÕES DE ASSINATURA — clientes que pediram um plano pela vitrine
+          pública (Cliente.jsx → "Assinaturas") e ainda não finalizaram na loja. */}
+      {solicitacoes.length > 0 && (
+        <div 
+          className="mb-10 p-6 md:p-8 rounded-3xl border-2"
+          style={{ backgroundColor: hexToRgba(cores.primaria, 0.05), borderColor: hexToRgba(cores.primaria, 0.3) }}
+        >
+          <div className="flex items-center gap-3 mb-5">
+            <span 
+              className="flex items-center justify-center w-8 h-8 rounded-full text-xs font-black text-white"
+              style={{ backgroundColor: cores.primaria }}
+            >
+              {solicitacoes.length}
+            </span>
+            <h2 className="text-lg font-black uppercase italic tracking-tighter" style={{ color: cores.texto }}>
+              Solicitações de Assinatura Pendentes
+            </h2>
+          </div>
+
+          <div className="space-y-3">
+            {solicitacoes.map(sol => (
+              <div 
+                key={sol.id} 
+                className="p-5 rounded-2xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
+                style={{ backgroundColor: cores.card, borderColor: cores.borda }}
+              >
+                <div>
+                  <p className="font-black text-lg uppercase" style={{ color: cores.texto }}>{sol.nome}</p>
+                  <p className="text-xs font-bold mt-1" style={{ color: cores.textoSecundario }}>
+                    📱 {sol.telefone} <span className="mx-2">•</span> Quer o plano <span style={{ color: cores.primaria }}>{sol.planoNome}</span> (R$ {sol.planoValor})
+                  </p>
+                </div>
+                <div className="flex gap-2 w-full md:w-auto">
+                  <button 
+                    onClick={() => finalizarSolicitacao(sol)} 
+                    className="flex-1 md:flex-none bg-green-600 hover:opacity-90 text-white font-black text-xs uppercase tracking-widest px-5 py-3 rounded-xl transition-all"
+                  >
+                    ✓ Finalizar
+                  </button>
+                  <button 
+                    onClick={() => recusarSolicitacao(sol)} 
+                    className="flex-1 md:flex-none border font-black text-xs uppercase tracking-widest px-5 py-3 rounded-xl transition-all hover:opacity-80"
+                    style={{ borderColor: cores.borda, color: cores.textoSecundario }}
+                  >
+                    Recusar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
         
@@ -197,8 +395,8 @@ export default function AdminPlanos() {
               
               <div className="flex gap-2">
                 <button onClick={() => alternarStatus(p)} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.textoSecundario }}>👁️</button>
-                <button onClick={() => setForm(p)} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.texto }}>✏️</button>
-                <button onClick={async () => { if(window.confirm("Apagar plano?")) { await deleteDoc(doc(db, "planos", p.id)); carregarDados(); } }} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.primaria }}>🗑️</button>
+                <button onClick={() => iniciarEdicao(p)} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.texto }}>✏️</button>
+                <button onClick={() => excluirPlano(p)} className="p-3 rounded-xl hover:opacity-80 transition-all text-white" style={{ backgroundColor: cores.primaria }}>🗑️</button>
               </div>
             </div>
           ))}
@@ -225,29 +423,35 @@ export default function AdminPlanos() {
               }} 
             />
             
-            <div className="grid grid-cols-3 gap-4">
-              <input 
-                value={form.valor} 
-                onChange={e => setForm({...form, valor: e.target.value})} 
-                placeholder="Valor" 
-                className="w-full border p-4 rounded-2xl outline-none" 
-                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
+            {/* BUG ENCONTRADO NO PASSEIO VISUAL: este formulário mora numa coluna estreita
+                (é 1 de 3 colunas do layout, e no mobile/telas médias essa coluna fica bem
+                menor ainda). Com "grid-cols-3" forçando os 3 campos lado a lado, cada input
+                sobrava menos de 100px — o placeholder "Validade (Dias)" e "Qtd Cortes"
+                ficavam cortados na borda do campo ("Valid...", "Qtd C..."). Empilhando em
+                1 coluna, cada campo usa a largura toda do formulário e o texto sempre cabe. */}
+            <div className="grid grid-cols-1 gap-4">
+              <input
+                value={form.valor}
+                onChange={e => setForm({...form, valor: e.target.value})}
+                placeholder="Valor"
+                className="w-full border p-4 rounded-2xl outline-none"
+                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
               />
-              <input 
-                value={form.cortes} 
-                onChange={e => setForm({...form, cortes: e.target.value})} 
-                placeholder="Qtd Cortes" 
+              <input
+                value={form.cortes}
+                onChange={e => setForm({...form, cortes: e.target.value})}
+                placeholder="Qtd Cortes"
                 type="number"
-                className="w-full border p-4 rounded-2xl outline-none" 
-                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
+                className="w-full border p-4 rounded-2xl outline-none"
+                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
               />
-              <input 
-                value={form.validadeDias} 
-                onChange={e => setForm({...form, validadeDias: e.target.value})} 
-                placeholder="Validade (Dias)" 
+              <input
+                value={form.validadeDias}
+                onChange={e => setForm({...form, validadeDias: e.target.value})}
+                placeholder="Validade (Dias)"
                 type="number"
-                className="w-full border p-4 rounded-2xl outline-none" 
-                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }} 
+                className="w-full border p-4 rounded-2xl outline-none"
+                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
               />
             </div>
 

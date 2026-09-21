@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { collection, query, where, getDocs, doc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
+import toast from "react-hot-toast";
 import { Wallet, Scissors, TrendingUp, Calendar, CheckCircle2, X } from "lucide-react";
+import Carregando from "./Carregando";
 
 export default function AdminComissoes({ onClose }) {
   const [configCores, setConfigCores] = useState(null);
@@ -25,17 +27,39 @@ export default function AdminComissoes({ onClose }) {
     const buscarDadosFinanceiros = async () => {
       setCarregando(true);
       try {
-        const q = query(collection(db, "comandas"), where("mesReferencia", "==", mesSelecionado));
-        const querySnapshot = await getDocs(q);
-        
+        // Comanda.jsx já congela mesReferencia/comissaoBarbeiro/lucroBarbearia/valorTotal
+        // na CRIAÇÃO da comanda (status "Pendente"), antes do pagamento ser confirmado —
+        // se o caixa fechar o modal de pagamento sem concluir, a comanda fica "Pendente"
+        // para sempre no banco, mas já com valores de comissão prontos. Sem o filtro de
+        // status abaixo, uma comanda nunca paga inflava o faturamento e a comissão do
+        // barbeiro. Além disso, este relatório lia só "comandas" (vendas de balcão) e
+        // ignorava totalmente "agendamentos" (agenda online) — que também recebem
+        // comissaoBarbeiro/lucroBarbearia/mesReferencia ao serem concluídos em
+        // AdminDashboard.jsx, só que no campo "valorGerado" em vez de "valorTotal".
+        // Mesmo merge de coleções que AdminGerencia.jsx já faz na Visão Geral.
+        const qComandas = query(
+          collection(db, "comandas"),
+          where("mesReferencia", "==", mesSelecionado),
+          where("status", "==", "Concluído")
+        );
+        const qAgendamentos = query(
+          collection(db, "agendamentos"),
+          where("mesReferencia", "==", mesSelecionado),
+          where("status", "==", "Concluído")
+        );
+
+        const [snapComandas, snapAgendamentos] = await Promise.all([
+          getDocs(qComandas),
+          getDocs(qAgendamentos)
+        ]);
+
         const agrupadoPorBarbeiro = {};
         let totalComissoesGeral = 0;
         let totalLucroGeral = 0;
         let totalFaturamento = 0;
 
-        querySnapshot.forEach((documento) => {
-          const comanda = documento.data();
-          const nomeBarbeiro = comanda.barbeiro || "Não Identificado";
+        const registrarAtendimento = (dados, campoValor) => {
+          const nomeBarbeiro = dados.barbeiro || "Não Identificado";
 
           if (!agrupadoPorBarbeiro[nomeBarbeiro]) {
             agrupadoPorBarbeiro[nomeBarbeiro] = {
@@ -47,9 +71,9 @@ export default function AdminComissoes({ onClose }) {
             };
           }
 
-          const valorTotal = Number(comanda.valorTotal || 0);
-          const comissao = Number(comanda.comissaoBarbeiro || 0);
-          const lucro = Number(comanda.lucroBarbearia || 0);
+          const valorTotal = Number(dados[campoValor] || 0);
+          const comissao = Number(dados.comissaoBarbeiro || 0);
+          const lucro = Number(dados.lucroBarbearia || 0);
 
           agrupadoPorBarbeiro[nomeBarbeiro].totalGerado += valorTotal;
           agrupadoPorBarbeiro[nomeBarbeiro].comissaoReceber += comissao;
@@ -59,7 +83,10 @@ export default function AdminComissoes({ onClose }) {
           totalFaturamento += valorTotal;
           totalComissoesGeral += comissao;
           totalLucroGeral += lucro;
-        });
+        };
+
+        snapComandas.forEach((documento) => registrarAtendimento(documento.data(), "valorTotal"));
+        snapAgendamentos.forEach((documento) => registrarAtendimento(documento.data(), "valorGerado"));
 
         const rankingEquipe = Object.values(agrupadoPorBarbeiro).sort((a, b) => b.totalGerado - a.totalGerado);
 
@@ -72,6 +99,7 @@ export default function AdminComissoes({ onClose }) {
 
       } catch (error) {
         console.error("Erro ao buscar comissões:", error);
+        toast.error("Erro ao carregar os dados de comissões.");
       } finally {
         setCarregando(false);
       }
@@ -82,7 +110,7 @@ export default function AdminComissoes({ onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in zoom-in-95 duration-300">
-      <div className="w-full max-w-6xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col h-[90vh]"
+      <div className="w-full max-w-6xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
            style={{ backgroundColor: configCores?.fundo || '#ffffff' }}>
         
         {/* CABEÇALHO DO MODAL */}
@@ -148,7 +176,7 @@ export default function AdminComissoes({ onClose }) {
           </h2>
 
           {carregando ? (
-            <div className="p-10 text-center font-bold opacity-50">Calculando repasses...</div>
+            <Carregando tela={false} label="Calculando repasses..." />
           ) : dadosEquipe.length === 0 ? (
             <div className="p-10 text-center border-2 border-dashed rounded-3xl opacity-50" style={{ borderColor: configCores?.borda || '#eee' }}>
               <p className="font-bold uppercase">Nenhum atendimento finalizado neste mês.</p>

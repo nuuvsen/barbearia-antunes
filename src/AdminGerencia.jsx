@@ -6,10 +6,12 @@ import {
   Scissors, User, Save, XCircle, CheckCircle2, Calendar, Edit2, ShoppingBag, Wallet,
   DollarSign, Receipt, TrendingDown, Eye, Activity
 } from 'lucide-react'
-import AdminComissoes from './AdminComissoes' 
+import AdminComissoes from './AdminComissoes'
 import TicketMedio from './TicketMedio'
 import AdminDespesas from './AdminDespesas'
 import Swal from 'sweetalert2'
+import { ehBloqueio } from './bloqueioUtils'
+import Carregando from './Carregando'
 
 export default function AdminGerencia() {
   // ==========================================
@@ -99,8 +101,17 @@ export default function AdminGerencia() {
       const dataAtual = new Date();
       const mesAtual = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
 
-      // 1. Busca TODAS as comandas do mês
-      const qComandas = query(collection(db, "comandas"), where("mesReferencia", "==", mesAtual));
+      // 1. Busca as comandas PAGAS do mês. Comanda.jsx grava mesReferencia/valorTotal/
+      // lucroBarbearia já na criação (status "Pendente", antes do pagamento ser
+      // confirmado) — sem o filtro de status, uma comanda aberta e nunca finalizada
+      // (caixa fechou o pagamento sem confirmar) entrava no Faturamento Bruto, no Lucro
+      // Líquido Real e no ranking de Top Serviços como se tivesse sido vendida de
+      // verdade. Agendamentos, logo abaixo, já tinham esse filtro — só faltava aqui.
+      const qComandas = query(
+        collection(db, "comandas"),
+        where("mesReferencia", "==", mesAtual),
+        where("status", "==", "Concluído")
+      );
       const snapshotComandas = await getDocs(qComandas);
 
       const receitas = [];
@@ -111,7 +122,11 @@ export default function AdminGerencia() {
         const dados = doc.data();
         receitas.push({ id: doc.id, origem: 'comanda', ...dados });
         somaLucroBarbearia += Number(dados.lucroBarbearia || 0);
-        faturamentoBruto += (dados.valorTotal || 0);
+        // "valorTotal" é o valor cheio congelado na criação da comanda (Comanda.jsx), antes
+        // de qualquer desconto dado no fechamento do pagamento. "valorFinal" (gravado em
+        // AdminDashboard.jsx ao concluir) é o que realmente entrou no caixa — sem essa
+        // preferência, um desconto dado numa comanda nunca aparecia no Faturamento Bruto.
+        faturamentoBruto += Number(dados.valorFinal ?? dados.valorTotal ?? 0);
       });
 
       // 1b. Busca agendamentos concluídos do mês. A comissão e o mês de referência só
@@ -192,11 +207,22 @@ export default function AdminGerencia() {
 
   const calcularRelatorios = async () => {
     const snap = await getDocs(collection(db, "agendamentos"))
-    const todosAgendamentos = snap.docs.map(doc => ({ id: doc.id, origem: 'agendamento', ...doc.data() }));
-    setAgendamentosDados(todosAgendamentos);
+    // Bloqueios manuais de horário (ver bloqueioUtils.js) não são agendamentos reais — ficam
+    // fora de todo o funil de volume/conversão/cancelamento, senão infla "Volume de
+    // Agendamentos" e distorce a "Taxa de Conversão" pra baixo sem nenhum cliente de verdade.
+    const todosAgendamentos = snap.docs
+      .map(doc => ({ id: doc.id, origem: 'agendamento', ...doc.data() }))
+      .filter(ag => !ehBloqueio(ag));
 
     const snapComandas = await getDocs(collection(db, "comandas"))
     const todasComandas = snapComandas.docs.map(doc => ({ id: doc.id, origem: 'comanda', ...doc.data() }));
+
+    // TicketMedio.jsx só recebia "todosAgendamentos" (agenda online), deixando toda venda
+    // de balcão/comanda fora do ticket médio, do ranking de clientes e da divisão por forma
+    // de pagamento. TicketMedio.jsx já sabe filtrar por status "Concluído" e já trata os dois
+    // formatos de data (ISO dos agendamentos, DD/MM/AAAA das comandas), então basta juntar as
+    // duas listas aqui.
+    setAgendamentosDados([...todosAgendamentos, ...todasComandas]);
 
     const hoje = new Date();
     const hojeNorm = { dia: String(hoje.getDate()).padStart(2, '0'), mes: String(hoje.getMonth() + 1).padStart(2, '0'), ano: String(hoje.getFullYear()) };
@@ -275,7 +301,9 @@ export default function AdminGerencia() {
     // agendamentos, mas não no volume/cancelamento (funil diferente) ---
     todasComandas.forEach(data => {
       if (data.status !== 'Concluído') return
-      registrarNoFinanceiro(data, Number(data.valorTotal || 0))
+      // Mesmo motivo do faturamentoBruto acima: usa o valor realmente cobrado
+      // (valorFinal, já com desconto), não o valor cheio congelado na criação.
+      registrarNoFinanceiro(data, Number(data.valorFinal ?? data.valorTotal ?? 0))
     })
 
     const ticketHoje = qtdHoje > 0 ? somaHoje / qtdHoje : 0;
@@ -286,7 +314,7 @@ export default function AdminGerencia() {
       faturamentoMensal: somaMes,
       ticketMedioHoje: ticketHoje,
       ticketMedioMes: ticketMes,
-      total: snap.docs.length,
+      total: todosAgendamentos.length,
       concluidos: totalConcluidos,
       cancelados: totalCancelados,
       financeiro: financeiroMap,
@@ -347,7 +375,7 @@ export default function AdminGerencia() {
     setComissaoProduto(barbeiro.comissaoProduto || 0);
   };
 
-  if (carregando) return <div className="p-10 text-white font-black animate-pulse">CARREGANDO GERÊNCIA...</div>
+  if (carregando) return <Carregando label="Carregando gerência..." />
 
   return (
     <div className="animate-in fade-in duration-500 pb-20 min-h-screen relative" style={{ color: cores.texto }}>
@@ -406,7 +434,7 @@ export default function AdminGerencia() {
                       <p className="text-[10px] opacity-60 uppercase">{item.data} - {item.barbeiro} {item.origem === 'agendamento' ? '· Agenda' : '· Comanda'}</p>
                     </div>
                     <div className="text-right">
-                      <p className="font-black text-blue-500">{formatarMoeda(item.valorTotal ?? item.valorGerado ?? 0)}</p>
+                      <p className="font-black text-blue-500">{formatarMoeda(item.valorFinal ?? item.valorTotal ?? item.valorGerado ?? 0)}</p>
                       <p className="text-[10px] font-bold text-green-500 uppercase">Retido: {formatarMoeda(item.lucroBarbearia || 0)}</p>
                     </div>
                   </div>

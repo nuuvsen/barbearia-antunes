@@ -35,11 +35,32 @@ export default function TicketMedio({ onClose, agendamentos, cores }) {
     };
 
     atendimentosValidos.forEach(item => {
-      const valStr = item.preco.toString().replace(/\D/g, '');
-      const valor = parseInt(valStr) / 100;
-      
+      // Bug real encontrado: isso sempre lia "preco" (o preço de tabela no momento do
+      // agendamento/criação da comanda), nunca "valorFinal" (o que realmente foi cobrado,
+      // já com desconto — gravado em AdminDashboard.jsx ao concluir). Um desconto dado no
+      // fechamento do pagamento nunca aparecia aqui. Pior: um atendimento coberto por
+      // plano grava "preco" como o texto "PLANO ATIVO"/"INCLUSO NO PLANO" — sem dígito
+      // nenhum pra extrair, isso virava NaN e contaminava o ticket médio daquele
+      // barbeiro/cliente/forma de pagamento/dia da semana inteiro (exibindo "R$ NaN").
+      // Usa valorFinal quando existe (sempre discount-aware); só cai pro parse antigo do
+      // "preco" em registros concluídos antes dessa correção, e trata visita de plano como
+      // R$ 0 (conta como atendimento, sem gerar valor novo).
+      let valor;
+      if (typeof item.valorFinal === 'number') {
+        valor = item.valorFinal;
+      } else if (item.preco === 'PLANO' || item.preco === 'PLANO ATIVO' || item.preco === 'INCLUSO NO PLANO') {
+        valor = 0;
+      } else {
+        const valStr = item.preco.toString().replace(/\D/g, '');
+        valor = valStr ? parseInt(valStr) / 100 : 0;
+      }
+
       const barbeiro = item.barbeiro || 'Sem Barbeiro';
-      const cliente = item.nome || item.cliente || 'Avulso';
+      // Agendamentos e comandas gravam o cliente sempre em "clienteNome" (ver Comanda.jsx,
+      // Cliente.jsx, AdminPagamento.jsx). Os campos "nome"/"cliente" nunca existiram nesses
+      // documentos, então todo mundo caía em "Avulso" e o ranking de Top Clientes nunca
+      // separava ninguém de verdade.
+      const cliente = item.clienteNome || 'Avulso';
       const pagamento = item.formaPagamento || item.metodoPagamento || 'Outro';
       
       // Data para descobrir o dia da semana. O agendamento online (Cliente.jsx) grava em

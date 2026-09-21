@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import { Users, ChevronRight, Target, ShieldCheck } from 'lucide-react'
+import Carregando from './Carregando'
 
 export default function ClientesPorBarbeiro({ barbeiros }) {
   const [atendimentos, setAtendimentos] = useState([])
@@ -93,9 +94,7 @@ export default function ClientesPorBarbeiro({ barbeiros }) {
       </div>
 
       {loading ? (
-        <div className="p-10 text-center font-black uppercase text-[10px] tracking-widest opacity-30">
-          Analisando histórico de fidelidade...
-        </div>
+        <Carregando tela={false} label="Analisando histórico de fidelidade..." />
       ) : (
         barbeiros.map(b => {
           // CORREÇÃO 4: Resgatando o total pelo NOME do barbeiro

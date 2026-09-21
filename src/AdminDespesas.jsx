@@ -56,12 +56,13 @@ export default function AdminDespesas({ onClose }) {
   // 3. Adicionar Nova Despesa
   const salvarDespesa = async (e) => {
     e.preventDefault();
-    if (!descricao.trim() || !valor) return toast("Preencha a descrição e o valor.");
+    if (!descricao.trim() || !valor) return toast.error("Preencha a descrição e o valor.");
+    if (Number(valor) <= 0) return toast.error("O valor da despesa precisa ser maior que zero.");
 
     try {
       // Extrai o ano e o mês da data selecionada para o filtro (YYYY-MM)
-      const mesReferencia = dataDespesa.substring(0, 7); 
-      
+      const mesReferencia = dataDespesa.substring(0, 7);
+
       const novaDespesa = {
         descricao,
         valor: Number(valor),
@@ -71,9 +72,10 @@ export default function AdminDespesas({ onClose }) {
       };
 
       await addDoc(collection(db, "despesas"), novaDespesa);
-      
+
       setDescricao('');
       setValor('');
+      toast.success("Despesa registrada com sucesso!");
     } catch (error) {
       console.error("Erro ao salvar despesa:", error);
       toast.error("Erro ao registrar a despesa.");
@@ -81,12 +83,24 @@ export default function AdminDespesas({ onClose }) {
   };
 
   // 4. Excluir Despesa
-  const excluirDespesa = async (id) => {
-    if (window.confirm("Deseja realmente apagar este lançamento?")) {
+  const excluirDespesa = async (item) => {
+    const resultado = await Swal.fire({
+      title: 'Apagar lançamento?',
+      text: `Deseja apagar permanentemente a despesa "${item.descricao}" (R$ ${Number(item.valor).toFixed(2).replace('.', ',')})?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, apagar!',
+      cancelButtonText: 'Cancelar'
+    })
+    if (resultado.isConfirmed) {
       try {
-        await deleteDoc(doc(db, "despesas", id));
+        await deleteDoc(doc(db, "despesas", item.id));
+        toast.success("Despesa removida com sucesso!");
       } catch (error) {
         console.error("Erro ao excluir despesa:", error);
+        toast.error("Erro ao remover despesa.");
       }
     }
   };
@@ -161,9 +175,10 @@ export default function AdminDespesas({ onClose }) {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-[10px] font-black uppercase opacity-50 ml-2" style={{ color: configCores?.texto || '#000' }}>Valor (R$)</label>
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         step="0.01"
+                        min="0.01"
                         value={valor}
                         onChange={(e) => setValor(e.target.value)}
                         className="w-full p-4 rounded-2xl border outline-none font-bold text-red-500 focus:brightness-95 transition-all"
@@ -225,7 +240,7 @@ export default function AdminDespesas({ onClose }) {
                           </div>
                           <div className="flex items-center gap-4">
                             <span className="font-black text-red-500 text-lg">R$ {Number(item.valor).toFixed(2).replace('.', ',')}</span>
-                            <button onClick={() => excluirDespesa(item.id)} className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all">
+                            <button onClick={() => excluirDespesa(item)} className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all">
                               <Trash2 size={16} />
                             </button>
                           </div>

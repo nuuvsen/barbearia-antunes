@@ -121,14 +121,17 @@ export default function App() {
           },
         }}
       />
-      {/* 3. AQUI ESTÁ O SEU MONITOR FANTASMA! 👇 */}
-      <BotMonitor />
-      
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Cliente servicos={servicos} />} />
           <Route path="/admin" element={
             <RequireAdminAuth configDoc="acessoAdmin" titulo="Acesso Restrito — Painel Admin">
+              {/* BotMonitor fica só aqui dentro (painel admin logado). Antes ele estava
+                  renderizado no App inteiro, então TODO visitante do site — inclusive o
+                  cliente comum na tela de agendamento — ficava, pra sempre, tentando bater
+                  a cada 5s em "http://localhost:3001" (um endereço que só existe na máquina
+                  do admin). Isso nunca vai funcionar no navegador do cliente. */}
+              <BotMonitor />
               <Admin servicos={servicos} aoMudar={carregarDados} />
             </RequireAdminAuth>
           } />

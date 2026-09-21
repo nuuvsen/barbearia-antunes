@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import { Star, Calendar, TrendingUp, Scissors, Clock } from 'lucide-react'
+import Carregando from './Carregando'
 
 export default function MediaPorBarbeiro({ barbeiros }) {
   const [filtro, setFiltro] = useState('mes') // 'dia', 'mes', 'ano'
@@ -132,7 +133,7 @@ export default function MediaPorBarbeiro({ barbeiros }) {
       </div>
 
       {loading ? (
-        <div className="text-center py-10 opacity-50 font-black uppercase text-xs tracking-widest">Calculando Métricas...</div>
+        <Carregando tela={false} label="Calculando métricas..." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {barbeiros.map(b => {

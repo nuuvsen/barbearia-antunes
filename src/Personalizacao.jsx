@@ -63,6 +63,21 @@ const PRESETS = [
       textoSecundario: '#6b7280',
       borda: '#e5e7eb'
     }
+  },
+  {
+    // Preset pedido pelo Cleuven a partir do moodboard "Moderna e Urbana -
+    // Vibrante & Sofisticada": as 4 cores exatas do moodboard (vermelho,
+    // cinza chumbo, cinza claro e branco), organizadas no mesmo padrão do
+    // "White Clean" acima (fundo em cinza claro, cards brancos, texto escuro).
+    nome: 'Moderna e Urbana',
+    cores: {
+      primaria: '#dc2626',       // Vermelho
+      fundo: '#d1d5db',          // Cinza Claro
+      card: '#ffffff',           // Branco
+      texto: '#374151',          // Cinza Chumbo
+      textoSecundario: '#374151',// Cinza Chumbo
+      borda: '#d1d5db'           // Cinza Claro
+    }
   }
 ]
 
@@ -107,6 +122,16 @@ export default function Personalizacao() {
     }
     carregarTema();
   }, []);
+
+  // BUG ENCONTRADO NO PASSEIO VISUAL: o "check" de qual preset está ativo comparava só a
+  // "Cor Principal". Como o novo preset "Moderna e Urbana" usa o mesmo vermelho do "Dark Red
+  // (Padrão)", os dois ficavam marcados como selecionados ao mesmo tempo. Comparando todas
+  // as cores, só o preset que realmente bate 100% fica marcado.
+  const mesmasCores = (a, b) => {
+    if (!a || !b) return false;
+    const chaves = ['primaria', 'fundo', 'card', 'texto', 'textoSecundario', 'borda'];
+    return chaves.every(k => (a[k] || '').toLowerCase() === (b[k] || '').toLowerCase());
+  }
 
   const atualizarFavicon = (url) => {
     let link = document.querySelector("link[rel~='icon']");
@@ -317,9 +342,9 @@ export default function Personalizacao() {
                     key={idx}
                     onClick={() => aplicarPreset(p.cores)}
                     className="flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all hover:scale-[1.02] active:scale-95 group"
-                    style={{ 
-                      backgroundColor: p.cores.fundo, 
-                      borderColor: tema.cores.primaria === p.cores.primaria ? p.cores.primaria : 'var(--cor-borda)' 
+                    style={{
+                      backgroundColor: p.cores.fundo,
+                      borderColor: mesmasCores(tema.cores, p.cores) ? p.cores.primaria : 'var(--cor-borda)'
                     }}
                   >
                     <div className="flex gap-1">
@@ -329,7 +354,7 @@ export default function Personalizacao() {
                     <span className="text-[9px] font-black uppercase text-center leading-tight" style={{ color: p.cores.texto }}>
                       {p.nome}
                     </span>
-                    {tema.cores.primaria === p.cores.primaria && (
+                    {mesmasCores(tema.cores, p.cores) && (
                       <CheckCircle2 size={14} style={{ color: p.cores.primaria }} />
                     )}
                   </button>
@@ -353,7 +378,7 @@ export default function Personalizacao() {
                   <span className="text-[9px] font-black uppercase text-center leading-tight" style={{ color: tema.presetCustomizado?.texto || 'var(--cor-texto-secundario)' }}>
                     {tema.presetCustomizado ? 'Meu Estilo' : 'Vazio'}
                   </span>
-                  {tema.presetCustomizado && tema.cores.primaria === tema.presetCustomizado.primaria && (
+                  {tema.presetCustomizado && mesmasCores(tema.cores, tema.presetCustomizado) && (
                     <CheckCircle2 size={14} style={{ color: tema.cores.primaria }} />
                   )}
                 </button>

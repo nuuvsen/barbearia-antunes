@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from './firebase'; 
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, onSnapshot, doc, updateDoc, addDoc, getDoc } from 'firebase/firestore';
-import { CalendarDays } from 'lucide-react';
+import { collection, query, where, getDocs, onSnapshot, doc, updateDoc, getDoc, increment } from 'firebase/firestore';
+import { CalendarDays, Bell } from 'lucide-react';
+import { ativarNotificacoes } from './firebaseMessaging';
 import Swal from 'sweetalert2';
 import toast from 'react-hot-toast';
+import { ehBloqueio, abrirModalDeBloqueio, criarBloqueios, removerBloqueio, liberarHorario } from './bloqueioUtils';
+import Carregando from './Carregando';
 
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
 
@@ -113,7 +116,15 @@ export default function PainelBarbeiro() {
     signOut(auth);
   };
 
-  const excluirAgendamento = async (id) => {
+  const clicarAtivarNotificacoes = () => {
+    if (!barbeiroPerfil?.id) {
+      toast.error('Aguarde o perfil carregar antes de ativar notificações.');
+      return;
+    }
+    ativarNotificacoes('barbeiros', barbeiroPerfil.id);
+  };
+
+  const excluirAgendamento = async (item) => {
     Swal.fire({
       title: 'Cancelar Agendamento?',
       text: "Deseja marcar este agendamento como Cancelado?",
@@ -128,7 +139,21 @@ export default function PainelBarbeiro() {
     }).then(async (result) => {
       if (result.isConfirmed) {
         try {
-          await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
+          await updateDoc(doc(db, "agendamentos", item.id), { status: "Cancelado" });
+
+          // Libera a trava de horário (ver bloqueioUtils.js) pra esse horário voltar a
+          // ficar disponível para agendamento.
+          await liberarHorario(item.barbeiro, item.data, item.hora);
+
+          // Bug real encontrado: quando o cliente cancela o próprio agendamento pela
+          // página dele (Cliente.jsx), o crédito de plano usado ao agendar é devolvido
+          // (cortesRestantes + 1). Cancelar o MESMO agendamento por aqui (pelo Painel do
+          // Barbeiro) não devolvia o crédito — o cliente perdia o corte do plano de vez,
+          // mesmo sem nunca ter sido atendido. Corrigido para devolver o crédito também aqui.
+          if ((item.preco === 'PLANO' || item.preco === 'PLANO ATIVO') && item.clienteTelefone) {
+            await updateDoc(doc(db, "clientes", item.clienteTelefone), { cortesRestantes: increment(1) });
+          }
+
           toast.success("Agendamento marcado como cancelado!");
         } catch (error) {
           console.error("Erro ao cancelar:", error);
@@ -138,42 +163,43 @@ export default function PainelBarbeiro() {
     });
   };
 
-  const bloquearHorarioDaGrade = async (hora) => {
+  const bloquearHorarioDaGrade = async (hora, horariosLivres) => {
     if (!barbeiroPerfil) return;
 
-    Swal.fire({
-      title: 'Bloquear Horário?',
-      text: `Deseja fechar a sua agenda às ${hora}?`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonColor: '#d33',
-      cancelButtonColor: '#3085d6',
-      confirmButtonText: 'Sim, bloquear!',
-      cancelButtonText: 'Cancelar',
-      background: configCores?.card || '#ffffff',
-      color: configCores?.texto || '#000000'
-    }).then(async (result) => {
-      if (result.isConfirmed) {
-        try {
-          await addDoc(collection(db, "agendamentos"), {
-            clienteNome: "🔒 HORÁRIO BLOQUEADO",
-            clienteTelefone: "00000000000",
-            servico: "Bloqueio Manual",
-            barbeiro: barbeiroPerfil.nome,
-            // ISO (AAAA-MM-DD), igual ao resto do sistema — antes gravava em formato BR (DD/MM/AAAA),
-            // o que quebrava as buscas por intervalo de data em AdminAgenda.jsx.
-            data: getFormatosData(dataSelecionada).iso,
-            hora: hora,
-            status: "Pendente",
-            tipo: "agendamento"
-          });
-          toast.success("Horário bloqueado com sucesso!");
-        } catch (error) {
-          console.error("Erro ao bloquear:", error);
-          toast.error("Falha ao bloquear horário.");
-        }
-      }
-    });
+    const resultado = await abrirModalDeBloqueio({ cores: configCores, horariosDisponiveis: horariosLivres, horaInicial: hora });
+    if (!resultado) return;
+
+    const horariosParaBloquear = horariosLivres.filter(h => h >= resultado.horaInicio && h <= resultado.horaFim);
+    if (horariosParaBloquear.length === 0) {
+      toast.error("Nenhum horário livre no intervalo selecionado.");
+      return;
+    }
+
+    try {
+      await criarBloqueios({
+        barbeiro: barbeiroPerfil.nome,
+        dataISO: getFormatosData(dataSelecionada).iso,
+        horarios: horariosParaBloquear,
+        motivo: resultado.motivo
+      });
+      toast.success(horariosParaBloquear.length > 1 ? `${horariosParaBloquear.length} horários bloqueados!` : "Horário bloqueado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao bloquear:", error);
+      // Agora que o bloqueio verifica cada horário atomicamente (ver bloqueioUtils.js), um
+      // horário já ocupado nesse meio-tempo gera um erro específico (code 'HORARIOS_OCUPADOS')
+      // — mostramos a mensagem exata em vez de um genérico "falha ao bloquear".
+      toast.error(error.code === 'HORARIOS_OCUPADOS' ? error.message : "Falha ao bloquear horário.");
+    }
+  };
+
+  const desbloquearDaGrade = async (bloqueio) => {
+    try {
+      await removerBloqueio(bloqueio);
+      toast.success("Horário desbloqueado!");
+    } catch (error) {
+      console.error("Erro ao desbloquear:", error);
+      toast.error("Falha ao desbloquear horário.");
+    }
   };
 
   const formatarWhatsApp = (numero) => {
@@ -265,24 +291,26 @@ export default function PainelBarbeiro() {
 
   const horariosFiltrados = horariosDaData.filter(hora => {
     const ocupado = agendamentosAtivos.find(ag => ag.hora === hora);
-    if (ocupado) return true; 
+    if (ocupado) return true;
     if (!barbeiroTrabalhaHj) return false;
     if (isHoje) {
       const [hSlot, mSlot] = hora.split(':').map(Number);
       const minutosSlot = (hSlot * 60) + mSlot;
-      return minutosSlot >= minutosAtuais; 
+      return minutosSlot >= minutosAtuais;
     }
-    return true; 
+    return true;
   });
+
+  // Horários realmente livres — usado para popular o seletor de intervalo do modal de bloqueio.
+  const horariosLivres = horariosFiltrados.filter(hora => !agendamentosAtivos.find(ag => ag.hora === hora));
 
   // =========================================================================
   // RENDERIZAÇÃO
   // =========================================================================
   if (carregando) {
     return (
-      <div className="min-h-screen flex items-center justify-center font-black text-2xl animate-pulse italic"
-           style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.primaria || '#dc2626' }}>
-        Carregando painel...
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: configCores?.fundo || '#000000' }}>
+        <Carregando label="Carregando painel..." />
       </div>
     );
   }
@@ -342,13 +370,23 @@ export default function PainelBarbeiro() {
         <h1 className="text-lg md:text-2xl font-black italic tracking-tighter" style={{ color: configCores?.texto || '#000000' }}>
           ANTUNES.OS | <span style={{ color: configCores?.primaria || '#dc2626' }}>Minha Agenda</span>
         </h1>
-        <button 
-          onClick={fazerLogout}
-          className="font-bold py-2 px-6 rounded-lg transition uppercase tracking-widest text-xs hover:brightness-125 border shadow-sm"
-          style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff', borderColor: configCores?.borda || 'transparent' }}
-        >
-          Sair
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={clicarAtivarNotificacoes}
+            title="Ativar Notificações"
+            className="p-2.5 rounded-lg transition border shadow-sm hover:brightness-125"
+            style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff', borderColor: configCores?.borda || 'transparent' }}
+          >
+            <Bell size={16} />
+          </button>
+          <button 
+            onClick={fazerLogout}
+            className="font-bold py-2 px-6 rounded-lg transition uppercase tracking-widest text-xs hover:brightness-125 border shadow-sm"
+            style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff', borderColor: configCores?.borda || 'transparent' }}
+          >
+            Sair
+          </button>
+        </div>
       </header>
 
       <main className="mx-auto max-w-4xl space-y-6">
@@ -414,20 +452,30 @@ export default function PainelBarbeiro() {
             ) : (
               horariosFiltrados.map(hora => {
                 const ocupado = agendamentosAtivos.find(ag => ag.hora === hora);
+                const bloqueado = ocupado && ehBloqueio(ocupado);
 
                 return (
                   <div key={hora} className="flex justify-between items-center p-4 rounded-2xl transition-all border"
-                        style={{ 
-                          backgroundColor: ocupado ? 'rgba(0,0,0,0.05)' : configCores?.fundo || 'var(--cor-input-bg)',
+                        style={{
+                          backgroundColor: bloqueado ? 'rgba(120,120,128,0.12)' : ocupado ? 'rgba(0,0,0,0.05)' : configCores?.fundo || 'var(--cor-input-bg)',
                           borderColor: configCores?.borda || 'var(--cor-borda)',
                           borderLeftWidth: ocupado ? '4px' : '1px',
-                          borderLeftColor: ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
+                          borderLeftColor: bloqueado ? '#71717a' : ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
                         }}>
-                    
+
                     <div className="flex items-center gap-4">
                       <span className="font-black text-lg" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{hora}</span>
-                      
-                      {ocupado && (
+
+                      {bloqueado ? (
+                        <div className="text-left border-l pl-4" style={{ borderColor: configCores?.borda }}>
+                          <p className="font-black uppercase tracking-tighter" style={{ color: '#71717a' }}>
+                            🔒 Bloqueado
+                          </p>
+                          {ocupado.motivo && (
+                            <p className="text-[10px] font-bold uppercase opacity-60" style={{ color: configCores?.textoSecundario }}>{ocupado.motivo}</p>
+                          )}
+                        </div>
+                      ) : ocupado && (
                         <div className="text-left border-l pl-4" style={{ borderColor: configCores?.borda }}>
                           <p className="font-black uppercase tracking-tighter" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                             {ocupado.clienteNome}
@@ -436,28 +484,37 @@ export default function PainelBarbeiro() {
                         </div>
                       )}
                     </div>
-                    
-                    {ocupado ? (
+
+                    {bloqueado ? (
+                      <button
+                        onClick={() => desbloquearDaGrade(ocupado)}
+                        title="Desbloquear horário"
+                        className="p-2 rounded-lg transition-all border shadow-sm hover:bg-red-500 hover:text-white hover:border-red-500"
+                        style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}
+                      >
+                        🔓
+                      </button>
+                    ) : ocupado ? (
                       <div className="flex items-center gap-2">
-                        <a href={formatarWhatsApp(ocupado.clienteTelefone)} target="_blank" rel="noreferrer" 
+                        <a href={formatarWhatsApp(ocupado.clienteTelefone)} target="_blank" rel="noreferrer"
                            className="p-2 rounded-lg hover:brightness-125 transition-all border shadow-sm"
                            title="Contatar Cliente"
                            style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                           <IconWhatsApp />
                         </a>
-                        <button 
-                          onClick={() => excluirAgendamento(ocupado.id)} 
+                        <button
+                          onClick={() => excluirAgendamento(ocupado)}
                           title="Cancelar Agendamento"
-                          className="p-2 rounded-lg transition-all border shadow-sm hover:bg-red-500 hover:text-white hover:border-red-500" 
+                          className="p-2 rounded-lg transition-all border shadow-sm hover:bg-red-500 hover:text-white hover:border-red-500"
                           style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}
                         >
                           🗑️
                         </button>
                       </div>
                     ) : (
-                      <button 
+                      <button
                         className="text-xs font-black uppercase tracking-widest text-green-500 hover:text-white hover:bg-red-500 px-4 py-2 rounded-xl transition-all border border-green-500/30 hover:border-red-500 cursor-pointer shadow-sm"
-                        onClick={() => bloquearHorarioDaGrade(hora)}
+                        onClick={() => bloquearHorarioDaGrade(hora, horariosLivres)}
                         title="Clique para bloquear este horário"
                       >
                         Livre

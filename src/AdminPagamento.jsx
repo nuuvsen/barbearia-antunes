@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase'; 
 import { doc, getDoc } from 'firebase/firestore';
-import { X, DollarSign, CreditCard, Smartphone, Receipt, Percent, CheckCircle, ExternalLink } from 'lucide-react';
+import { X, DollarSign, CreditCard, Smartphone, Receipt, CheckCircle, ExternalLink, Wallet } from 'lucide-react';
+import Carregando from './Carregando';
 
 export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
   const [metodo, setMetodo] = useState('Pix');
@@ -80,9 +81,20 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
     window.open(`https://wa.me/55${agendamento.clienteTelefone?.replace(/\D/g, '')}?text=${mensagem}`, '_blank');
   };
 
-  // Se as cores ainda não carregaram ou não há agendamento, não renderiza nada
-  // Isso impede que o usuário veja as cores "antigas" ou componentes sem estilo
-  if (!cores || !agendamento) return null;
+  // Se não há agendamento, o modal nem devia estar aberto — não renderiza nada mesmo.
+  if (!agendamento) return null;
+
+  // Bug real encontrado: enquanto "cores" não chegava do Firebase, o componente também
+  // retornava null — ou seja, ao abrir o modal de pagamento, a tela ficava um instante
+  // completamente em branco (nem o fundo escuro do backdrop aparecia) antes do conteúdo
+  // surgir de repente. Mostra um carregamento visível em vez de nada.
+  if (!cores) {
+    return (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/95 backdrop-blur-md">
+        <Carregando tela={false} label="Carregando..." />
+      </div>
+    );
+  }
 
   return (
     // ANIMAÇÃO AQUI: z-[70], slide-in-from-bottom-12, zoom-in-95 e ease-out
@@ -135,34 +147,44 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
             <>
               <div>
                 <label className="text-[10px] uppercase font-black mb-3 block" style={{ color: cores.textoSecundario }}>Forma de Recebimento</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['Pix', 'Dinheiro', 'Cartão'].map((m) => (
+                <div className="grid grid-cols-2 gap-2">
+                  {['Pix', 'Dinheiro', 'Cartão', 'Fiado'].map((m) => (
                     <button
                       key={m}
                       onClick={() => setMetodo(m)}
                       className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all font-black uppercase text-[10px] ${
                         metodo === m ? 'text-white shadow-lg scale-105' : 'hover:border-gray-600'
                       }`}
-                      style={{ 
-                        backgroundColor: metodo === m ? cores.primaria : 'rgba(255,255,255,0.05)',
-                        borderColor: metodo === m ? cores.primaria : cores.borda,
+                      style={{
+                        backgroundColor: metodo === m ? (m === 'Fiado' ? '#f97316' : cores.primaria) : 'rgba(255,255,255,0.05)',
+                        borderColor: metodo === m ? (m === 'Fiado' ? '#f97316' : cores.primaria) : cores.borda,
                         color: metodo === m ? '#fff' : cores.textoSecundario
                       }}
                     >
                       {m === 'Pix' && <Smartphone size={18} />}
                       {m === 'Dinheiro' && <DollarSign size={18} />}
                       {m === 'Cartão' && <CreditCard size={18} />}
+                      {m === 'Fiado' && <Wallet size={18} />}
                       {m}
                     </button>
                   ))}
                 </div>
               </div>
 
+              {metodo === 'Fiado' && (
+                <div className="p-4 rounded-2xl border flex items-start gap-3" style={{ backgroundColor: 'rgba(249, 115, 22, 0.08)', borderColor: 'rgba(249, 115, 22, 0.25)' }}>
+                  <Wallet size={18} className="flex-shrink-0 mt-0.5" style={{ color: '#f97316' }} />
+                  <p className="text-[10px] font-bold leading-relaxed" style={{ color: cores.textoSecundario }}>
+                    Nenhum valor será recebido agora. O atendimento será concluído e o valor entra como <span style={{ color: '#f97316', fontWeight: 900 }}>dívida em aberto</span> na tela "Contas a Receber".
+                  </p>
+                </div>
+              )}
+
               <div className="relative">
                 <label className="text-[10px] uppercase font-black mb-2 block" style={{ color: cores.textoSecundario }}>Dar Desconto (R$)</label>
                 <div className="relative">
-                    <Percent className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: cores.textoSecundario }} size={16} />
-                    <input 
+                    <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: cores.textoSecundario }} size={16} />
+                    <input
                         type="number"
                         value={desconto}
                         onChange={(e) => setDesconto(Math.max(0, parseFloat(e.target.value) || 0))}
@@ -181,12 +203,14 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
             </div>
           )}
 
-          <div 
+          <div
             className="border p-5 rounded-3xl text-center"
-            style={{ backgroundColor: 'rgba(34, 197, 94, 0.05)', borderColor: 'rgba(34, 197, 94, 0.2)' }}
+            style={metodo === 'Fiado' && !isPlano
+              ? { backgroundColor: 'rgba(249, 115, 22, 0.08)', borderColor: 'rgba(249, 115, 22, 0.25)' }
+              : { backgroundColor: 'rgba(34, 197, 94, 0.05)', borderColor: 'rgba(34, 197, 94, 0.2)' }}
           >
-            <p className="text-[10px] text-green-600 font-black uppercase tracking-widest mb-1">
-              {isPlano ? 'Status' : 'Total a Receber'}
+            <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: metodo === 'Fiado' && !isPlano ? '#f97316' : '#16a34a' }}>
+              {isPlano ? 'Status' : metodo === 'Fiado' ? 'Fica Devendo (Fiado)' : 'Total a Receber'}
             </p>
             <p className="text-3xl font-black tracking-tighter uppercase italic" style={{ color: cores.texto }}>
               {isPlano ? 'Liberado' : formatarMoeda(valorFinal)}
@@ -195,7 +219,7 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
 
           <div className="space-y-2 pt-2">
             {!isPlano && (metodo === 'Cartão' || metodo === 'Pix') && (
-                <button 
+                <button
                     onClick={abrirMaquininha}
                     className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl uppercase tracking-widest transition-all flex items-center justify-center gap-2 text-xs"
                 >
@@ -203,17 +227,17 @@ export default function AdminPagamento({ agendamento, onClose, onConfirm }) {
                 </button>
             )}
 
-            <button 
-              onClick={() => onConfirm(agendamento.id, { 
-                metodo, 
-                desconto, 
-                valorFinal, 
-                isPlano 
+            <button
+              onClick={() => onConfirm(agendamento.id, {
+                metodo,
+                desconto,
+                valorFinal,
+                isPlano
               })}
               className="w-full text-white font-black py-5 rounded-2xl uppercase tracking-widest transition-all shadow-xl active:scale-95"
-              style={{ backgroundColor: cores.primaria }}
+              style={{ backgroundColor: metodo === 'Fiado' && !isPlano ? '#f97316' : cores.primaria }}
             >
-              Finalizar no Sistema
+              {metodo === 'Fiado' && !isPlano ? 'Confirmar Fiado' : 'Finalizar no Sistema'}
             </button>
             
             <button 

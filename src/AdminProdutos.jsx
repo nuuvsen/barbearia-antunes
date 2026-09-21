@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase' 
-import { 
-  collection, addDoc, deleteDoc, 
-  doc, updateDoc, onSnapshot, serverTimestamp 
+import {
+  collection, addDoc, deleteDoc,
+  doc, updateDoc, onSnapshot, serverTimestamp, increment
 } from 'firebase/firestore'
 import { 
   Plus, X, Package, Search, 
@@ -113,15 +113,21 @@ export default function AdminProdutos() {
         }
       }
 
-      const { id, foto, ...restoForm } = form; 
-      
+      const { id, foto, ...restoForm } = form;
+
       // Ajuste para aceitar vírgula ou ponto no preço
       const precoFormatado = String(form.preco).replace(',', '.');
+      const precoNumerico = parseFloat(precoFormatado);
+
+      if (isNaN(precoNumerico) || precoNumerico < 0) {
+        toast.error("Preço inválido. Digite um valor numérico (ex: 29.90).");
+        return; // o "finally" abaixo já desliga o estado de carregando
+      }
 
       const dados = {
         ...restoForm,
         foto: urlFinalFoto,
-        preco: parseFloat(precoFormatado || 0),
+        preco: precoNumerico,
         estoque: parseInt(form.estoque || 0),
         estoqueMinimo: parseInt(form.estoqueMinimo || 3),
         atualizadoEm: serverTimestamp()
@@ -142,23 +148,38 @@ export default function AdminProdutos() {
 
   const excluirProduto = async (id) => {
     if(!id) return;
-    if(window.confirm("Atenção: Deseja realmente EXCLUIR este produto permanentemente?")) {
+    const resultado = await Swal.fire({
+      title: 'Excluir produto?',
+      text: 'Atenção: deseja realmente excluir este produto permanentemente?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, excluir!',
+      cancelButtonText: 'Cancelar'
+    })
+    if (resultado.isConfirmed) {
       try {
         await deleteDoc(doc(db, "produtos", id))
+        toast.success("Produto removido com sucesso!")
       } catch (error) {
         toast.error("Erro ao excluir: " + error.message)
       }
     }
   }
 
+  // Usa increment() (operação atômica do Firestore) em vez de calcular o novo
+  // valor a partir do estado local e sobrescrever — assim, cliques rápidos ou
+  // duas abas abertas ajustando o mesmo produto não perdem incrementos um do
+  // outro (before: "estoque: novoEstoque" lia o valor local e sobrescrevia,
+  // podendo perder uma alteração concorrente — clássico "lost update").
   const ajustarEstoque = async (produto, variacao) => {
     if(!produto.id) return;
-    const novoEstoque = parseInt(produto.estoque) + variacao;
-    if (novoEstoque < 0) return; 
-    
+    if (variacao < 0 && produto.estoque <= 0) return;
+
     try {
-      await updateDoc(doc(db, "produtos", produto.id), { 
-        estoque: novoEstoque,
+      await updateDoc(doc(db, "produtos", produto.id), {
+        estoque: increment(variacao),
         atualizadoEm: serverTimestamp()
       })
     } catch (error) {
@@ -167,13 +188,35 @@ export default function AdminProdutos() {
   }
 
   const addCategoria = async () => {
-    if(!novaCat) return
-    await addDoc(collection(db, "categorias"), { nome: novaCat })
-    setNovaCat('')
+    if(!novaCat.trim()) return
+    try {
+      await addDoc(collection(db, "categorias"), { nome: novaCat.trim() })
+      setNovaCat('')
+      toast.success("Categoria adicionada!")
+    } catch (error) {
+      toast.error("Erro ao adicionar categoria.")
+    }
   }
 
   const deleteCategoria = async (id) => {
-    if(window.confirm("Excluir categoria?")) await deleteDoc(doc(db, "categorias", id))
+    const resultado = await Swal.fire({
+      title: 'Excluir categoria?',
+      text: 'Produtos que já usam essa categoria manterão o nome antigo, mas ela some da lista de opções.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sim, excluir!',
+      cancelButtonText: 'Cancelar'
+    })
+    if (resultado.isConfirmed) {
+      try {
+        await deleteDoc(doc(db, "categorias", id))
+        toast.success("Categoria removida com sucesso!")
+      } catch (error) {
+        toast.error("Erro ao remover categoria.")
+      }
+    }
   }
 
   const totalGeralEstoque = produtos.reduce((acc, p) => acc + (Number(p.preco || 0) * Number(p.estoque || 0)), 0)
@@ -388,7 +431,12 @@ export default function AdminProdutos() {
                   {p.foto ? (
                     <img src={p.foto} alt={p.nome} className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 ${esgotado ? 'grayscale' : ''}`} />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center opacity-20" style={{ color: configCores?.texto }}><Package size={48}/></div>
+                    // Bug visual: com o tema escuro (fundo do placeholder e ícone quase da
+                    // mesma cor), opacity-20 deixava o ícone praticamente invisível — o
+                    // quadrado ficava com cara de "preto sólido" em vez de um placeholder.
+                    // Subindo pra opacity-40 o ícone continua discreto mas fica visível
+                    // em qualquer combinação de cores do tema.
+                    <div className="w-full h-full flex items-center justify-center opacity-40" style={{ color: configCores?.texto }}><Package size={48}/></div>
                   )}
                 </div>
 

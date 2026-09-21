@@ -13,8 +13,17 @@ const firebaseConfig = {
   measurementId: "G-4Z7P50KMVF"
 };
 
+// Exporta a config crua também: usada para abrir uma instância secundária e
+// isolada do Firebase quando é preciso criar/alterar a conta de acesso de um
+// barbeiro sem derrubar a sessão do admin logado (ver AdminBarbeiros.jsx).
+export { firebaseConfig };
+
 // Inicializa a conexão com o Google
 const app = initializeApp(firebaseConfig);
+
+// Exportado pra ser reaproveitado por outros módulos do Firebase (ex: Cloud Messaging
+// em firebaseMessaging.js), sem cada um precisar reinicializar o app.
+export { app };
 
 // Inicializa o banco de dados COM suporte offline e "exporta" ele
 export const db = initializeFirestore(app, {

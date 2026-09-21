@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, onSnapshot, query, doc, updateDoc, where, getDocs, getDoc, increment, addDoc } from 'firebase/firestore'; 
+import { collection, onSnapshot, query, doc, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { Search, X, Plus, Clock, CalendarDays } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AdminPagamento from './AdminPagamento'
 import Comanda from './Comanda'
 import Swal from 'sweetalert2'
+import { ehBloqueio, abrirModalDeBloqueio, criarBloqueios, removerBloqueio, liberarHorario } from './bloqueioUtils'
+import { concluirAtendimento } from './atendimentoUtils'
 
 const IconCheck = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
@@ -21,6 +23,7 @@ export default function AdminDashboard({ totalServicos }) {
   const [barbeiros, setBarbeiros] = useState([])
   const [mostrarComanda, setMostrarComanda] = useState(false)
   const [dataSelecionada, setDataSelecionada] = useState(new Date())
+  const [abaFila, setAbaFila] = useState('ativos') // 'ativos' | 'cancelados'
 
   // 1. CARREGAR AGENDAMENTOS E COMANDAS (UNIFICADOS)
   useEffect(() => {
@@ -96,94 +99,17 @@ export default function AdminDashboard({ totalServicos }) {
   // FUNÇÕES DE AÇÃO 
   // =========================================================================
   const concluirAtendimentoFinal = async (id, dadosPagamento = {}) => {
+    if (!id) {
+      toast.error("Erro: ID do atendimento não encontrado.");
+      return;
+    }
     try {
-      if (!id) {
-        toast.error("Erro: ID do atendimento não encontrado.");
-        return;
-      }
+      const resultado = await concluirAtendimento({ id, agendamento: agendamentoEmPagamento, dadosPagamento, barbeiros });
 
-      // Dados vindos do modal de pagamento (AdminPagamento.jsx): forma de recebimento,
-      // desconto aplicado, valor final cobrado e se foi coberto por um plano.
-      // "formaPagamento" é o nome de campo que os relatórios de AdminGerencia.jsx já leem.
-      const { metodo, desconto, valorFinal, isPlano } = dadosPagamento;
-      const dadosFinalizacao = {
-        status: "Concluído",
-        ...(metodo !== undefined && { formaPagamento: metodo }),
-        ...(desconto !== undefined && { desconto }),
-        ...(valorFinal !== undefined && { valorFinal }),
-        ...(isPlano !== undefined && { isPlano }),
-      };
-
-      if (agendamentoEmPagamento?.origem === 'comanda') {
-        // Comandas já congelam comissão e mês de referência na criação (Comanda.jsx) —
-        // aqui só atualizamos os dados do próprio pagamento (forma, desconto, valor final).
-        await updateDoc(doc(db, "comandas", id), dadosFinalizacao);
-
-        if (agendamentoEmPagamento.produtos && agendamentoEmPagamento.produtos.length > 0) {
-          for (const prod of agendamentoEmPagamento.produtos) {
-            const nomeProduto = typeof prod === 'string' ? prod : prod.nome;
-            
-            if (nomeProduto && nomeProduto !== 'Nenhum' && nomeProduto !== '') {
-              const qProd = query(collection(db, "produtos"), where("nome", "==", nomeProduto.trim()));
-              const snapProd = await getDocs(qProd);
-              
-              if (!snapProd.empty) {
-                const produtoRef = snapProd.docs[0].ref;
-                await updateDoc(produtoRef, {
-                  quantidadeAtual: increment(-1)
-                });
-              }
-            }
-          }
-        }
+      if (resultado.fiadoFalhou) {
+        toast.error("Atendimento concluído, mas houve um erro ao registrar o fiado. Anote manualmente!");
       } else {
-        // Agendamentos (vindos do site/agenda) nunca tinham comissão congelada.
-        // Calculamos aqui, no momento da conclusão — igual a Comanda.jsx faz na criação —
-        // para os relatórios de Gerência poderem somar agendamentos e comandas juntos
-        // sem recalcular comissão com a porcentagem atual (que pode já ter mudado depois).
-        const dadosBarbeiro = barbeiros.find(b => b.nome === agendamentoEmPagamento?.barbeiro);
-        const taxaServico = (dadosBarbeiro?.comissaoServico ?? 50) / 100;
-
-        let valorBase = 0; // Atendimento coberto por plano não gera valor novo hoje (mesmo comportamento de antes)
-        if (!isPlano) {
-          if (typeof valorFinal === 'number') {
-            valorBase = valorFinal;
-          } else {
-            // Fallback: sem dadosPagamento, tenta extrair da string de preço (ex: "R$ 45,00")
-            const valStr = agendamentoEmPagamento?.preco?.toString().replace(/\D/g, '') || '0';
-            valorBase = parseInt(valStr) / 100;
-          }
-        }
-        const comissaoBarbeiro = valorBase * taxaServico;
-
-        const dataAtual = new Date();
-        const mesReferencia = `${dataAtual.getFullYear()}-${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
-
-        await updateDoc(doc(db, "agendamentos", id), {
-          ...dadosFinalizacao,
-          valorGerado: valorBase,
-          comissaoBarbeiro,
-          lucroBarbearia: valorBase - comissaoBarbeiro,
-          mesReferencia,
-        });
-      }
-      
-      toast.success("Atendimento concluído e financeiro/estoque atualizados!"); 
-      
-      if (agendamentoEmPagamento) {
-        try {
-          await fetch('http://localhost:3001/api/bot/nps', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              telefone: agendamentoEmPagamento.clienteTelefone,
-              nomeCliente: agendamentoEmPagamento.clienteNome,
-              barbeiro: agendamentoEmPagamento.barbeiro || "Equipe"
-            })
-          });
-        } catch (errorBot) {
-          console.error("Erro ao acionar o bot de NPS:", errorBot);
-        }
+        toast.success("Atendimento concluído e financeiro/estoque atualizados!");
       }
 
       setAgendamentoEmPagamento(null);
@@ -193,10 +119,17 @@ export default function AdminDashboard({ totalServicos }) {
     }
   }
 
-  const excluirAgendamento = async (id) => {
+  const excluirAgendamento = async (item) => {
+    // Mesmo problema do "tipo" vs "origem" acima: este botão recebia só o "id" e sempre
+    // cancelava em "agendamentos". Numa comanda "Pendente" (walk-in abandonado) isso
+    // também falhava silenciosamente — o doc não existe em "agendamentos" — deixando a
+    // comanda sem NENHUMA forma de ser cancelada ou finalizada pela tela.
+    const ehComanda = item?.tipo === 'comanda';
     Swal.fire({
-      title: 'Cancelar Agendamento?',
-      text: "Deseja marcar este agendamento como Cancelado?",
+      title: ehComanda ? 'Cancelar Comanda?' : 'Cancelar Agendamento?',
+      text: ehComanda
+        ? "Deseja marcar esta comanda como Cancelada? Nenhuma cobrança será feita."
+        : "Deseja marcar este agendamento como Cancelado?",
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#d33',
@@ -208,50 +141,67 @@ export default function AdminDashboard({ totalServicos }) {
     }).then(async (result) => {
       if (result.isConfirmed) {
         try {
-          await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
-          toast.success("Agendamento marcado como cancelado!");
+          await updateDoc(doc(db, ehComanda ? "comandas" : "agendamentos", item.id), { status: "Cancelado" });
+
+          // Libera a trava de horário (ver bloqueioUtils.js) — comandas não passam por essa
+          // trava (não reservam data/hora futura), só agendamentos reais.
+          if (!ehComanda) {
+            await liberarHorario(item.barbeiro, item.data, item.hora);
+          }
+
+          // Bug real encontrado: quando o cliente cancela o próprio agendamento pela
+          // página dele (Cliente.jsx), o crédito de plano usado na hora de agendar é
+          // devolvido (cortesRestantes + 1). Cancelar o MESMO agendamento por aqui (pelo
+          // admin) não fazia isso — o cliente perdia o corte do plano de vez, mesmo sem
+          // nunca ter sido atendido. Corrigido para devolver o crédito também aqui.
+          if (!ehComanda && (item.preco === 'PLANO' || item.preco === 'PLANO ATIVO') && item.clienteTelefone) {
+            await updateDoc(doc(db, "clientes", item.clienteTelefone), { cortesRestantes: increment(1) });
+          }
+
+          toast.success(ehComanda ? "Comanda marcada como cancelada!" : "Agendamento marcado como cancelado!");
         } catch (error) {
           console.error("Erro ao cancelar:", error);
-          toast.error("Falha ao cancelar o agendamento.");
+          toast.error(ehComanda ? "Falha ao cancelar a comanda." : "Falha ao cancelar o agendamento.");
         }
       }
     });
   }
 
-  const bloquearHorarioDaGrade = async (hora, nomeBarbeiro) => {
-    Swal.fire({
-      title: 'Bloquear Horário?',
-      text: `Deseja fechar a agenda das ${hora} para ${nomeBarbeiro}?`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonColor: '#d33',
-      cancelButtonColor: '#3085d6',
-      confirmButtonText: 'Sim, bloquear!',
-      cancelButtonText: 'Cancelar',
-      background: configCores?.card || '#ffffff',
-      color: configCores?.texto || '#000000'
-    }).then(async (result) => {
-      if (result.isConfirmed) {
-        try {
-          await addDoc(collection(db, "agendamentos"), {
-            clienteNome: "🔒 HORÁRIO BLOQUEADO",
-            clienteTelefone: "00000000000",
-            servico: "Bloqueio Manual",
-            barbeiro: nomeBarbeiro,
-            // ISO (AAAA-MM-DD), igual ao resto do sistema — antes gravava em formato BR (DD/MM/AAAA),
-            // o que quebrava as buscas por intervalo de data em AdminAgenda.jsx.
-            data: formatosSel.iso,
-            hora: hora,
-            status: "Pendente",
-            tipo: "agendamento"
-          });
-          toast.success("Horário bloqueado com sucesso!");
-        } catch (error) {
-          console.error("Erro ao bloquear:", error);
-          toast.error("Falha ao bloquear horário.");
-        }
-      }
-    });
+  const bloquearHorarioDaGrade = async (hora, nomeBarbeiro, horariosLivres) => {
+    const resultado = await abrirModalDeBloqueio({ cores: configCores, horariosDisponiveis: horariosLivres, horaInicial: hora });
+    if (!resultado) return;
+
+    const horariosParaBloquear = horariosLivres.filter(h => h >= resultado.horaInicio && h <= resultado.horaFim);
+    if (horariosParaBloquear.length === 0) {
+      toast.error("Nenhum horário livre no intervalo selecionado.");
+      return;
+    }
+
+    try {
+      await criarBloqueios({
+        barbeiro: nomeBarbeiro,
+        dataISO: formatosSel.iso,
+        horarios: horariosParaBloquear,
+        motivo: resultado.motivo
+      });
+      toast.success(horariosParaBloquear.length > 1 ? `${horariosParaBloquear.length} horários bloqueados!` : "Horário bloqueado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao bloquear:", error);
+      // Agora que o bloqueio verifica cada horário atomicamente (ver bloqueioUtils.js), um
+      // horário já ocupado nesse meio-tempo gera um erro específico (code 'HORARIOS_OCUPADOS')
+      // — mostramos a mensagem exata em vez de um genérico "falha ao bloquear".
+      toast.error(error.code === 'HORARIOS_OCUPADOS' ? error.message : "Falha ao bloquear horário.");
+    }
+  }
+
+  const desbloquearDaGrade = async (bloqueio) => {
+    try {
+      await removerBloqueio(bloqueio);
+      toast.success("Horário desbloqueado!");
+    } catch (error) {
+      console.error("Erro ao desbloquear:", error);
+      toast.error("Falha ao desbloquear horário.");
+    }
   }
 
   const formatarWhatsApp = (numero) => {
@@ -339,6 +289,15 @@ export default function AdminDashboard({ totalServicos }) {
   const horaSpString = dataHojeObj.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
   const [hAtual, mAtual] = horaSpString.split(':').map(Number);
   const minutosAtuais = hAtual * 60 + mAtual;
+
+  // Fila (visão geral, abaixo da grade por barbeiro): antes misturava agendamentos ativos e
+  // cancelados na mesma lista (só com um estilo apagado pro cancelado) — pedido do usuário
+  // pra separar em duas abas, já que um cancelado no meio da fila real atrapalhava a
+  // varredura visual de quem realmente falta atender.
+  const filaGeral = proximosClientes.filter(ag => !ehBloqueio(ag));
+  const filaAtivos = filaGeral.filter(ag => ag.status !== 'Cancelado');
+  const filaCancelados = filaGeral.filter(ag => ag.status === 'Cancelado');
+  const filaExibida = abaFila === 'ativos' ? filaAtivos : filaCancelados;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 relative">
@@ -444,9 +403,9 @@ export default function AdminDashboard({ totalServicos }) {
 
           const horariosFiltrados = horariosDaData.filter(hora => {
             const ocupado = agendamentosBarbeiro.find(ag => ag.hora === hora);
-            
+
             // Sempre mostra se já tem um agendamento gravado (mesmo se for dia de folga do barbeiro)
-            if (ocupado) return true; 
+            if (ocupado) return true;
 
             // Se o horário estiver livre, mas o barbeiro não trabalha hoje, remove da grade
             if (!barbeiroTrabalhaHj) return false;
@@ -454,11 +413,15 @@ export default function AdminDashboard({ totalServicos }) {
             if (isHoje) {
               const [hSlot, mSlot] = hora.split(':').map(Number);
               const minutosSlot = (hSlot * 60) + mSlot;
-              return minutosSlot >= minutosAtuais; 
+              return minutosSlot >= minutosAtuais;
             }
 
-            return true; 
+            return true;
           });
+
+          // Horários realmente livres deste barbeiro neste dia — usado para popular o
+          // seletor de intervalo do modal de bloqueio (nunca oferece um horário já ocupado).
+          const horariosLivresBarbeiro = horariosFiltrados.filter(hora => !agendamentosBarbeiro.find(ag => ag.hora === hora));
 
           return (
             <div key={b.id} className="p-5 rounded-[2rem] border" 
@@ -485,18 +448,37 @@ export default function AdminDashboard({ totalServicos }) {
                 ) : (
                   horariosFiltrados.map(hora => {
                     const ocupado = agendamentosBarbeiro.find(ag => ag.hora === hora);
+                    const bloqueado = ocupado && ehBloqueio(ocupado);
 
                     return (
                       <div key={hora} className="flex justify-between items-center p-3 rounded-2xl text-xs transition-all border"
-                            style={{ 
-                              backgroundColor: ocupado ? 'rgba(0,0,0,0.1)' : configCores?.fundo || 'var(--cor-input-bg)',
+                            style={{
+                              backgroundColor: bloqueado ? 'rgba(120,120,128,0.15)' : ocupado ? 'rgba(0,0,0,0.1)' : configCores?.fundo || 'var(--cor-input-bg)',
                               borderColor: configCores?.borda || 'var(--cor-borda)',
                               borderLeftWidth: ocupado ? '4px' : '1px',
-                              borderLeftColor: ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
+                              borderLeftColor: bloqueado ? '#71717a' : ocupado ? (configCores?.primaria || 'var(--cor-primaria)') : configCores?.borda || 'var(--cor-borda)'
                             }}>
                         <span className="font-black" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>{hora}</span>
-                        
-                        {ocupado ? (
+
+                        {bloqueado ? (
+                          <div className="flex items-center gap-2">
+                            <div className="text-right">
+                              <p className="font-black truncate max-w-[110px] flex items-center gap-1 justify-end" style={{ color: '#71717a' }}>
+                                🔒 Bloqueado
+                              </p>
+                              {ocupado.motivo && (
+                                <p className="text-[8px] font-bold uppercase opacity-50 truncate max-w-[110px]">{ocupado.motivo}</p>
+                              )}
+                            </div>
+                            <button
+                              title="Desbloquear horário"
+                              className="text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-red-500 transition-colors"
+                              onClick={() => desbloquearDaGrade(ocupado)}
+                            >
+                              🔓
+                            </button>
+                          </div>
+                        ) : ocupado ? (
                           <div className="text-right">
                              <p className="font-black truncate max-w-[120px]" style={{ color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                                {ocupado.clienteNome}
@@ -504,9 +486,9 @@ export default function AdminDashboard({ totalServicos }) {
                              <p className="text-[8px] font-bold uppercase opacity-50">{ocupado.servico}</p>
                           </div>
                         ) : (
-                          <button 
+                          <button
                             className="text-[10px] font-black uppercase tracking-widest text-green-500 hover:text-green-600 transition-colors"
-                            onClick={() => bloquearHorarioDaGrade(hora, b.nome)}
+                            onClick={() => bloquearHorarioDaGrade(hora, b.nome, horariosLivresBarbeiro)}
                           >
                             Livre
                           </button>
@@ -521,12 +503,42 @@ export default function AdminDashboard({ totalServicos }) {
         })}
       </div>
 
-      <h2 className="text-xl font-bold mb-4 uppercase tracking-widest mt-12" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
-        Fila e Cancelados (Visão Geral)
-      </h2>
-      
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-12 mb-4">
+        <h2 className="text-xl font-bold uppercase tracking-widest" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+          {abaFila === 'ativos' ? 'Fila de Atendimentos' : 'Agendamentos Cancelados'}
+        </h2>
+
+        <div className="flex gap-2 p-1.5 rounded-2xl border w-fit" style={{ backgroundColor: configCores?.card || 'var(--cor-card)', borderColor: configCores?.borda || 'var(--cor-borda)' }}>
+          <button
+            onClick={() => setAbaFila('ativos')}
+            className="px-4 py-2.5 rounded-xl font-black uppercase text-[9px] tracking-widest transition-all"
+            style={{
+              backgroundColor: abaFila === 'ativos' ? (configCores?.primaria || 'var(--cor-primaria)') : 'transparent',
+              color: abaFila === 'ativos' ? '#ffffff' : (configCores?.textoSecundario || 'var(--cor-texto-secundario)')
+            }}
+          >
+            Fila ({filaAtivos.length})
+          </button>
+          <button
+            onClick={() => setAbaFila('cancelados')}
+            className="px-4 py-2.5 rounded-xl font-black uppercase text-[9px] tracking-widest transition-all"
+            style={{
+              backgroundColor: abaFila === 'cancelados' ? '#6b7280' : 'transparent',
+              color: abaFila === 'cancelados' ? '#ffffff' : (configCores?.textoSecundario || 'var(--cor-texto-secundario)')
+            }}
+          >
+            Cancelados ({filaCancelados.length})
+          </button>
+        </div>
+      </div>
+
       <div className="grid gap-4">
-        {proximosClientes.map(ag => {
+        {filaExibida.length === 0 && (
+          <p className="text-center font-bold text-sm py-10" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+            {abaFila === 'ativos' ? 'Nenhum atendimento na fila no momento.' : 'Nenhum agendamento cancelado.'}
+          </p>
+        )}
+        {filaExibida.map(ag => {
           const isCancelado = ag.status === 'Cancelado';
           return (
             <div 
@@ -588,7 +600,7 @@ export default function AdminDashboard({ totalServicos }) {
                   )}
                   
                   <button 
-                    onClick={() => excluirAgendamento(ag.id)} 
+                    onClick={() => excluirAgendamento(ag)}
                     className={`p-3 rounded-xl transition-all border ${isCancelado ? 'opacity-20 cursor-not-allowed' : 'hover:brightness-125'}`} 
                     disabled={isCancelado}
                     style={{ backgroundColor: configCores?.card || 'var(--cor-bg-botao)', borderColor: configCores?.borda || 'var(--cor-borda)', color: configCores?.texto || 'var(--cor-texto-principal)' }}

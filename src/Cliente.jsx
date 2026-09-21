@@ -1,11 +1,37 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, limit, setDoc } from 'firebase/firestore'
-import { Info } from 'lucide-react'
+import { Info, Bell } from 'lucide-react'
 import Swal from 'sweetalert2'
+import { BOT_URL } from './botConfig'
+import { reservarHorario, liberarHorario, entrarNaListaEspera } from './bloqueioUtils'
+import { ativarNotificacoes } from './firebaseMessaging'
+
+// Avisa o(s) barbeiro(s) por notificação push (não bloqueia a ação principal se falhar —
+// é só um "plus", o agendamento/cancelamento/solicitação em si já foi salvo antes disso).
+const notificarBarbeiro = async ({ destino, identificador, titulo, corpo }) => {
+  try {
+    await fetch(`${BOT_URL}/api/notificacoes/enviar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destino, identificador, titulo, corpo })
+    })
+  } catch (erro) {
+    console.error('Erro ao notificar barbeiro:', erro)
+  }
+}
 
 const MAPA_DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 const NOMES_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const CHAVE_TELEFONE_INSTALADO = 'antunes_cliente_telefone'
+
+// App instalado (PWA) = tela cheia, sem barra de endereço do navegador. É só nesse caso
+// que faz sentido pular a identificação sozinho — numa aba de navegador comum, um
+// computador/celular compartilhado poderia "logar" a próxima pessoa sem querer.
+const estaInstaladoComoApp = () => {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true
+}
 
 // Utilitário de Toast do SweetAlert2 (substituindo possíveis bibliotecas faltantes)
 const Toast = Swal.mixin({
@@ -49,11 +75,16 @@ export default function Cliente({ servicos }) {
 
   // ESTADOS CONFIGURAÇÕES
   const [barbeiros, setBarbeiros] = useState([])
+  const [planosDisponiveis, setPlanosDisponiveis] = useState([])
   const [configAgenda, setConfigAgenda] = useState(null)
   const [feriados, setFeriados] = useState([])
   const [feriadoSelecionado, setFeriadoSelecionado] = useState(null)
   const [horariosGerados, setHorariosGerados] = useState([])
   const [horariosOcupados, setHorariosOcupados] = useState([])
+
+  // ESTADOS LISTA DE ESPERA (dia inteiro lotado pro barbeiro/dia escolhido)
+  const [naListaEspera, setNaListaEspera] = useState(false)
+  const [entrandoNaFila, setEntrandoNaFila] = useState(false)
 
   const [mesVisivel, setMesVisivel] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
 
@@ -61,6 +92,9 @@ export default function Cliente({ servicos }) {
     const carregarTudo = async () => {
       const snapB = await getDocs(collection(db, "barbeiros"))
       setBarbeiros(snapB.docs.map(d => ({ id: d.id, ...d.data() })))
+
+      const snapPlanos = await getDocs(collection(db, "planos"))
+      setPlanosDisponiveis(snapPlanos.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status === 'Ativo'))
 
       const docAgenda = await getDoc(doc(db, "configuracoes", "agenda"))
       let cfg = docAgenda.exists() ? docAgenda.data() : { 
@@ -94,6 +128,17 @@ export default function Cliente({ servicos }) {
       } catch(e) { console.error(e) }
     }
     carregarTudo()
+  }, [])
+
+  // Login automático quando o app foi aberto instalado (ver estaInstaladoComoApp).
+  // Se não estiver instalado, não faz nada — segue exatamente o fluxo normal de sempre
+  // (etapa 1 em branco, pedindo os dados no final).
+  useEffect(() => {
+    if (!estaInstaladoComoApp()) return
+    const telefoneSalvo = localStorage.getItem(CHAVE_TELEFONE_INSTALADO)
+    if (telefoneSalvo) {
+      tentarLoginAutomatico(telefoneSalvo)
+    }
   }, [])
 
   useEffect(() => {
@@ -165,6 +210,7 @@ export default function Cliente({ servicos }) {
   const selecionarData = async (dia) => {
     setEscolha({...escolha, data: dia.formatoAPI})
     setEtapa(4)
+    setNaListaEspera(false)
     const diaSemana = dia.dataReal.getDay()
     const diaSigla = MAPA_DIAS[diaSemana] 
     
@@ -179,14 +225,23 @@ export default function Cliente({ servicos }) {
     if (escolha.barbeiro.id === 'qualquer') {
       const q = query(collection(db, "agendamentos"), where("data", "==", dia.formatoAPI))
       const snap = await getDocs(q)
-      const contagemHoras = {}
+      // Bug real encontrado: aqui contava QUANTIDADE de agendamentos por horário, não quantos
+      // barbeiros DISTINTOS estavam ocupados. Se o mesmo barbeiro tivesse 2 registros no mesmo
+      // horário (ex.: um bloqueio administrativo em cima de um agendamento já existente), a
+      // contagem batia no total de barbeiros ativos e o horário sumia da lista pra "Sem
+      // Preferência" — mesmo com outro barbeiro genuinamente livre naquele horário. Corrigido
+      // para contar barbeiros distintos ocupados, que é o que realmente importa aqui (a
+      // atribuição definitiva, em finalizarAgendamento, já faz essa checagem por nome corretamente).
+      const barbeirosOcupadosPorHora = {}
       snap.docs.filter(d => d.data().status !== 'Cancelado').forEach(d => {
-        const h = d.data().hora
-        contagemHoras[h] = (contagemHoras[h] || 0) + 1
+        const dados = d.data()
+        const h = dados.hora
+        if (!barbeirosOcupadosPorHora[h]) barbeirosOcupadosPorHora[h] = new Set()
+        barbeirosOcupadosPorHora[h].add(dados.barbeiro)
       })
       const barbeirosAtivosHoje = barbeiros.filter(b => b.diasTrabalho?.[diaSigla] !== false).length || 1
-      for (const [hora, qtd] of Object.entries(contagemHoras)) {
-        if (qtd >= barbeirosAtivosHoje) ocupados.push(hora)
+      for (const [hora, ocupadosSet] of Object.entries(barbeirosOcupadosPorHora)) {
+        if (ocupadosSet.size >= barbeirosAtivosHoje) ocupados.push(hora)
       }
     } else {
       const q = query(
@@ -247,8 +302,33 @@ export default function Cliente({ servicos }) {
       setContato({ nome: dados.nome, telefone: dados.telefone })
       setModo('assinante_logado')
       setEtapa(1)
+      localStorage.setItem(CHAVE_TELEFONE_INSTALADO, telefoneLogin)
     } else {
       setErroLogin("Telefone não encontrado ou sem plano ativo.")
+    }
+  }
+
+  // Login automático: só roda se o app estiver instalado (ver estaInstaladoComoApp) E já
+  // existir um telefone salvo de uma identificação anterior (login manual ou agendamento
+  // concluído). Se o cliente tiver plano, cai direto na área de assinante (igual ao login
+  // manual); sem plano, só preenche o telefone/nome sozinho pra ele não ter que redigitar
+  // na hora de confirmar um agendamento.
+  const tentarLoginAutomatico = async (telefoneSalvo) => {
+    try {
+      const docSnap = await getDoc(doc(db, "clientes", telefoneSalvo))
+      if (!docSnap.exists()) return
+      const dados = docSnap.data()
+
+      setContato({ nome: dados.nome || '', telefone: telefoneSalvo })
+
+      if (dados.planoId) {
+        const planoSnap = await getDoc(doc(db, "planos", dados.planoId))
+        const dadosPlano = planoSnap.exists() ? planoSnap.data() : { servicosInclusos: [], combos: [] }
+        setPerfil({ ...dados, servicosInclusos: dadosPlano.servicosInclusos || [], combosExclusivos: dadosPlano.combos || [] })
+        setModo('assinante_logado')
+      }
+    } catch (erro) {
+      console.error("Erro no login automático (app instalado):", erro)
     }
   }
 
@@ -283,7 +363,11 @@ export default function Cliente({ servicos }) {
     if (result.isConfirmed) {
       try {
         await updateDoc(doc(db, "agendamentos", agendamento.id), { status: 'Cancelado' })
-        
+
+        // Libera a trava de horário (ver bloqueioUtils.js) pra esse horário voltar a
+        // ficar disponível para outra pessoa agendar.
+        await liberarHorario(agendamento.barbeiro, agendamento.data, agendamento.hora)
+
         if (agendamento.preco === 'PLANO' || agendamento.preco === 'PLANO ATIVO') {
           const clienteRef = doc(db, "clientes", agendamento.clienteTelefone)
           const clienteSnap = await getDoc(clienteRef)
@@ -296,6 +380,13 @@ export default function Cliente({ servicos }) {
         setMeusAgendamentos(prev => prev.map(a => 
           a.id === agendamento.id ? { ...a, status: 'Cancelado' } : a
         ))
+
+        notificarBarbeiro({
+          destino: 'barbeiro',
+          identificador: agendamento.barbeiro,
+          titulo: 'Agendamento cancelado',
+          corpo: `${agendamento.clienteNome || 'Um cliente'} cancelou o corte de ${formatarDataAmigavel(agendamento.data)} às ${agendamento.hora}.`
+        })
         
         Toast.fire({ icon: 'success', title: 'Agendamento cancelado com sucesso!' })
       } catch (error) {
@@ -305,6 +396,9 @@ export default function Cliente({ servicos }) {
   }
 
   const sairOuVoltar = () => {
+    if (modo === 'assinante_logado' || modo === 'historico') {
+      localStorage.removeItem(CHAVE_TELEFONE_INSTALADO)
+    }
     setModo('agendamento')
     setPerfil(null)
     setTelefoneLogin('')
@@ -312,26 +406,152 @@ export default function Cliente({ servicos }) {
     setEtapa(1)
     setEscolha({ servico: null, barbeiro: null, data: null, hora: null })
     setFeriadoSelecionado(null)
+    setNaListaEspera(false)
+  }
+
+  // Solicitação de assinatura vinda da vitrine de planos (tela inicial → "Assinaturas").
+  // Não ativa o plano na hora: só registra o interesse do cliente pra ser finalizado
+  // (pagamento + ativação) presencialmente na loja, ver AdminPlanos.jsx.
+  const solicitarPlano = async (plano) => {
+    const { value: formValues } = await Swal.fire({
+      title: `Solicitar ${plano.nome}`,
+      html: `
+        <div style="display:block; width:100%; margin-bottom:14px; text-align:left;">
+          <label style="display:block; font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; color:#6b7280;">Seu WhatsApp</label>
+          <input id="swal-telefone-plano" class="swal2-input" style="display:block; width:100%; margin:0; box-sizing:border-box;" placeholder="53999999999" value="${(contato.telefone || '').replace(/"/g, '&quot;')}">
+        </div>
+        <div style="display:block; width:100%; text-align:left;">
+          <label style="display:block; font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; color:#6b7280;">Seu Nome</label>
+          <input id="swal-nome-plano" class="swal2-input" style="display:block; width:100%; margin:0; box-sizing:border-box;" placeholder="Nome completo" value="${(contato.nome || '').replace(/"/g, '&quot;')}">
+        </div>
+      `,
+      confirmButtonText: 'Solicitar Assinatura',
+      confirmButtonColor: '#dc2626',
+      showCancelButton: true,
+      cancelButtonText: 'Cancelar',
+      focusConfirm: false,
+      // Foca direto no WhatsApp (agora é o primeiro campo) e, enquanto o cliente digita,
+      // busca na base de clientes: se o telefone já bater com alguém cadastrado, preenche
+      // o nome sozinho (mesma ideia do preenchimento automático já usado no agendamento normal).
+      didOpen: () => {
+        const inputTelefone = document.getElementById('swal-telefone-plano')
+        const inputNome = document.getElementById('swal-nome-plano')
+        inputTelefone.focus()
+
+        let timeoutBusca = null
+        inputTelefone.addEventListener('input', () => {
+          if (timeoutBusca) clearTimeout(timeoutBusca)
+          timeoutBusca = setTimeout(async () => {
+            const tel = inputTelefone.value.trim()
+            if (tel.length < 10) return
+            try {
+              const clienteSnap = await getDoc(doc(db, "clientes", tel))
+              if (clienteSnap.exists() && clienteSnap.data().nome) {
+                inputNome.value = clienteSnap.data().nome
+              }
+            } catch (erro) {
+              console.error("Erro ao buscar cliente pelo telefone:", erro)
+            }
+          }, 500)
+        })
+      },
+      preConfirm: () => {
+        const nome = document.getElementById('swal-nome-plano').value.trim()
+        const telefone = document.getElementById('swal-telefone-plano').value.trim()
+        if (!nome || !telefone) {
+          Swal.showValidationMessage('Preencha seu WhatsApp e nome.')
+          return false
+        }
+        return { nome, telefone }
+      }
+    })
+
+    if (!formValues) return
+
+    try {
+      await addDoc(collection(db, "solicitacoesPlanos"), {
+        planoId: plano.id,
+        planoNome: plano.nome,
+        planoValor: plano.valor,
+        nome: formValues.nome,
+        telefone: formValues.telefone,
+        status: 'Pendente',
+        dataCriacao: new Date().toISOString()
+      })
+      setContato(prev => ({ ...prev, nome: formValues.nome, telefone: formValues.telefone }))
+
+      notificarBarbeiro({
+        destino: 'todos-barbeiros',
+        titulo: 'Nova solicitação de assinatura',
+        corpo: `${formValues.nome} quer o plano ${plano.nome}. Confira em Planos.`
+      })
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Solicitação enviada!',
+        text: 'Assim que possível vamos te chamar. Pra finalizar, é só passar na loja!',
+        confirmButtonColor: '#dc2626'
+      })
+    } catch (erro) {
+      console.error("Erro ao solicitar plano:", erro)
+      Toast.fire({ icon: 'error', title: 'Erro ao enviar sua solicitação. Tente novamente.' })
+    }
+  }
+
+  // Botão de sino no cabeçalho: se o cliente já digitou/logou com um telefone em algum
+  // momento (contato.telefone), usa ele direto; senão, pergunta rapidinho antes de pedir
+  // a permissão do navegador — precisa saber em qual "clientes/{telefone}" salvar o token.
+  const clicarAtivarNotificacoes = async () => {
+    let telefoneParaUsar = contato.telefone?.trim()
+    if (!telefoneParaUsar) {
+      const { value } = await Swal.fire({
+        title: 'Ativar Notificações',
+        input: 'text',
+        inputLabel: 'Confirme seu WhatsApp',
+        inputPlaceholder: '53999999999',
+        showCancelButton: true,
+        confirmButtonText: 'Continuar',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#dc2626'
+      })
+      if (!value) return
+      telefoneParaUsar = value.trim()
+      setContato(prev => ({ ...prev, telefone: telefoneParaUsar }))
+    }
+    await ativarNotificacoes('clientes', telefoneParaUsar)
+  }
+
+  // Entrada do cliente na lista de espera quando o dia inteiro do barbeiro (ou de "qualquer
+  // barbeiro") escolhido já está lotado (ver bloqueioUtils.js entrarNaListaEspera). Como o
+  // formulário de contato (nome/telefone) normalmente só aparece na etapa 5, aqui reaproveitamos
+  // o mesmo estado "contato" com seus próprios campos, preenchidos direto na etapa 4.
+  const entrarNaFila = async () => {
+    if (!contato.telefone.trim() || !contato.nome.trim()) {
+      Toast.fire({ icon: 'error', title: 'Preencha seu nome e telefone para entrar na fila.' })
+      return
+    }
+    setEntrandoNaFila(true)
+    try {
+      await entrarNaListaEspera({
+        telefone: contato.telefone.trim(),
+        nome: contato.nome.trim(),
+        barbeiro: escolha.barbeiro.id === 'qualquer' ? 'qualquer' : escolha.barbeiro.nome,
+        data: escolha.data,
+        servico: escolha.servico?.nome || null
+      })
+      setNaListaEspera(true)
+      Toast.fire({ icon: 'success', title: 'Você entrou na lista de espera! Avisaremos se um horário vagar.' })
+    } catch (erro) {
+      console.error("Erro ao entrar na lista de espera:", erro)
+      Toast.fire({ icon: 'error', title: 'Erro ao entrar na lista de espera.' })
+    }
+    setEntrandoNaFila(false)
   }
 
   const finalizarAgendamento = async (e) => {
     e.preventDefault()
     setSalvando(true)
     const estaInclusoNoPlano = modo === 'assinante_logado' && (perfil.servicosInclusos.includes(escolha.servico.nome) || escolha.servico.isCombo)
-    let barbeiroFinalNome = escolha.barbeiro.nome
-
-    if (escolha.barbeiro.id === 'qualquer') {
-      const q = query(collection(db, "agendamentos"), where("data", "==", escolha.data), where("hora", "==", escolha.hora))
-      const snap = await getDocs(q)
-      const barbeirosOcupadosNesteHorario = snap.docs
-        .filter(d => d.data().status !== 'Cancelado')
-        .map(d => d.data().barbeiro)
-      
-      const diaObj = new Date(escolha.data + 'T00:00:00')
-      const diaSigla = MAPA_DIAS[diaObj.getDay()]
-      const barbeiroLivre = barbeiros.find(b => !barbeirosOcupadosNesteHorario.includes(b.nome) && b.diasTrabalho?.[diaSigla] !== false)
-      barbeiroFinalNome = barbeiroLivre ? barbeiroLivre.nome : "Equipe Antunes"
-    }
 
     try {
       const clienteRef = doc(db, "clientes", contato.telefone);
@@ -352,24 +572,79 @@ export default function Cliente({ servicos }) {
         await updateDoc(clienteRef, { totalVisitas: totalAtual + 1 });
       }
 
-      await addDoc(collection(db, "agendamentos"), {
+      const dadosBaseAgendamento = {
         servico: escolha.servico.nome,
         preco: (estaInclusoNoPlano && perfil.cortesRestantes > 0) ? "PLANO ATIVO" : escolha.servico.preco,
-        barbeiro: barbeiroFinalNome, 
         data: escolha.data,
         hora: escolha.hora,
         clienteNome: contato.nome,
         clienteTelefone: contato.telefone,
         dataCriacao: new Date().toISOString(),
         status: "Pendente"
-      })
+      }
+
+      // Bug real encontrado: antes, o barbeiro era escolhido (ou verificado, no caso de um
+      // barbeiro específico) e o agendamento era criado em passos separados — sem nada
+      // impedindo que dois clientes escolhendo o mesmo horário quase ao mesmo tempo
+      // acabassem os dois com o mesmo barbeiro no mesmo horário (double booking real).
+      // Agora a reserva do horário e a criação do agendamento acontecem juntas, de forma
+      // atômica, dentro de reservarHorario() (ver bloqueioUtils.js) — ou as duas coisas
+      // acontecem, ou nenhuma.
+      let barbeiroFinalNome
+
+      if (escolha.barbeiro.id === 'qualquer') {
+        const diaObj = new Date(escolha.data + 'T00:00:00')
+        const diaSigla = MAPA_DIAS[diaObj.getDay()]
+        const candidatos = barbeiros.filter(b => b.diasTrabalho?.[diaSigla] !== false)
+
+        for (const candidato of candidatos) {
+          try {
+            await reservarHorario({
+              barbeiro: candidato.nome,
+              data: escolha.data,
+              hora: escolha.hora,
+              dadosDocumento: { ...dadosBaseAgendamento, barbeiro: candidato.nome }
+            })
+            barbeiroFinalNome = candidato.nome
+            break
+          } catch (erroReserva) {
+            if (erroReserva.code !== 'HORARIO_OCUPADO') throw erroReserva
+            // Esse barbeiro específico já ficou ocupado nesse meio-tempo — tenta o próximo.
+          }
+        }
+
+        if (!barbeiroFinalNome) {
+          // Nenhum dos barbeiros do dia estava livre: mantém o comportamento original de
+          // cair no "Equipe Antunes" (não é um barbeiro real, não precisa de trava).
+          barbeiroFinalNome = "Equipe Antunes"
+          await addDoc(collection(db, "agendamentos"), { ...dadosBaseAgendamento, barbeiro: barbeiroFinalNome })
+        }
+      } else {
+        barbeiroFinalNome = escolha.barbeiro.nome
+        try {
+          await reservarHorario({
+            barbeiro: barbeiroFinalNome,
+            data: escolha.data,
+            hora: escolha.hora,
+            dadosDocumento: { ...dadosBaseAgendamento, barbeiro: barbeiroFinalNome }
+          })
+        } catch (erroReserva) {
+          if (erroReserva.code === 'HORARIO_OCUPADO') {
+            Toast.fire({ icon: 'error', title: 'Esse horário acabou de ser reservado por outra pessoa. Escolha outro, por favor.' })
+            await selecionarData({ dataReal: new Date(escolha.data + 'T12:00:00'), formatoAPI: escolha.data })
+            setSalvando(false)
+            return
+          }
+          throw erroReserva
+        }
+      }
 
       if (estaInclusoNoPlano && perfil.cortesRestantes > 0) {
         await updateDoc(doc(db, "clientes", perfil.telefone), { cortesRestantes: perfil.cortesRestantes - 1 })
       }
 
       try {
-        await fetch('http://localhost:3001/api/bot/enviar-confirmacao', {
+        await fetch(`${BOT_URL}/api/bot/enviar-confirmacao`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -387,8 +662,16 @@ export default function Cliente({ servicos }) {
         console.error("Erro ao acionar o bot, mas o agendamento foi salvo:", errorBot);
       }
 
+      notificarBarbeiro({
+        destino: 'barbeiro',
+        identificador: barbeiroFinalNome,
+        titulo: 'Novo agendamento! ✂️',
+        corpo: `${contato.nome} marcou ${escolha.servico.nome} dia ${formatarDataAmigavel(escolha.data)} às ${escolha.hora}.`
+      })
+
+      localStorage.setItem(CHAVE_TELEFONE_INSTALADO, contato.telefone)
       setSucesso(true)
-    } catch (erro) { 
+    } catch (erro) {
       console.error(erro);
       Toast.fire({ icon: 'error', title: 'Erro ao confirmar a reserva.' })
     }
@@ -469,6 +752,15 @@ export default function Cliente({ servicos }) {
               {isDark ? '☀️' : '🌙'}
             </button>
 
+            {/* BOTÃO DE ATIVAR NOTIFICAÇÕES PUSH */}
+            <button 
+              onClick={clicarAtivarNotificacoes} 
+              className="p-2 bg-[var(--cor-card)] border border-[var(--cor-borda)] rounded-lg text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] transition-all flex items-center justify-center"
+              title="Ativar Notificações"
+            >
+              <Bell size={16} />
+            </button>
+
             {modo === 'agendamento' ? (
               <div className="flex gap-2">
                 <button 
@@ -478,7 +770,7 @@ export default function Cliente({ servicos }) {
                   Agendamentos
                 </button>
                 <button 
-                  onClick={() => setModo('login_assinante')} 
+                  onClick={() => setModo('planos')} 
                   className="text-[9px] bg-[var(--cor-primaria)] text-white font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:opacity-90 shadow-lg"
                 >
                   Assinaturas
@@ -499,7 +791,11 @@ export default function Cliente({ servicos }) {
               <h2 className="text-xl font-black text-[var(--cor-texto-principal)] italic uppercase truncate max-w-[180px]">{perfil.nome}</h2>
             </div>
             <div className="text-right flex-shrink-0">
-              <div className="bg-[var(--cor-primaria)] border border-[var(--cor-primaria)] rounded-xl px-4 py-2 flex flex-col items-center justify-center bg-opacity-10">
+              {/* Bug: "bg-opacity-10" não tem efeito nenhum junto de "bg-[var(--cor-primaria)]"
+                  (utility antiga do Tailwind v3, não combina com cor arbitrária) — o fundo saía
+                  100% vermelho opaco e o número (também vermelho) ficava invisível: vermelho
+                  sobre vermelho. Troquei pela sintaxe de opacidade do Tailwind v4 (/10). */}
+              <div className="bg-[var(--cor-primaria)]/10 border border-[var(--cor-primaria)] rounded-xl px-4 py-2 flex flex-col items-center justify-center">
                 <span className="text-3xl font-black text-[var(--cor-primaria)] leading-none">{perfil.cortesRestantes !== undefined ? perfil.cortesRestantes : 0}</span>
                 <span className="text-[9px] text-[var(--cor-texto-secundario)] uppercase tracking-widest font-bold mt-1">Créditos</span>
               </div>
@@ -507,9 +803,58 @@ export default function Cliente({ servicos }) {
           </div>
         )}
 
+        {modo === 'planos' && (
+          <div className="animate-in fade-in duration-500 space-y-4">
+            <div className="text-center mt-8 mb-2">
+              <h2 className="text-2xl font-black italic uppercase tracking-tighter text-[var(--cor-texto-principal)]">Nossos <span className="text-[var(--cor-primaria)]">Planos</span></h2>
+              <p className="text-xs text-[var(--cor-texto-secundario)] mt-2">Escolha um plano, solicite e finalize a assinatura na loja</p>
+            </div>
+
+            {planosDisponiveis.length === 0 ? (
+              <div className="text-center p-10 bg-[var(--cor-card)] rounded-3xl border border-[var(--cor-borda)]">
+                <p className="text-[var(--cor-texto-secundario)] font-bold text-sm">Nenhum plano disponível no momento.</p>
+              </div>
+            ) : (
+              planosDisponiveis.map(p => (
+                <div key={p.id} className="bg-[var(--cor-card)] p-6 rounded-3xl border border-[var(--cor-borda)] hover:border-[var(--cor-primaria)] transition-colors">
+                  <p className="font-black text-xl uppercase italic text-[var(--cor-texto-principal)]">{p.nome}</p>
+                  <p className="text-lg font-black text-[var(--cor-primaria)] mt-1">R$ {p.valor} <span className="text-xs font-normal text-[var(--cor-texto-secundario)]">/ mês</span></p>
+                  <p className="text-xs text-[var(--cor-texto-secundario)] mt-2 italic">
+                    Limite de {p.cortes} cortes{p.validadeDias ? ` (${p.validadeDias} dias de validade)` : ''}
+                  </p>
+
+                  {(p.servicosInclusos || []).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {p.servicosInclusos.map(s => (
+                        <span key={s} className="text-[10px] px-2 py-1 rounded-md uppercase font-bold bg-[var(--cor-bg-geral)] text-[var(--cor-texto-secundario)]">{s}</span>
+                      ))}
+                    </div>
+                  )}
+                  {(p.combos || []).length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {p.combos.map((c, idx) => (
+                        <span key={'combo-'+idx} className="text-[10px] px-2 py-1 rounded-md uppercase font-black bg-[var(--cor-primaria)]/10 text-[var(--cor-primaria)] border border-[var(--cor-primaria)]/20">⭐ {c.nome}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  <button onClick={() => solicitarPlano(p)} className="w-full mt-5 bg-[var(--cor-primaria)] text-white font-black py-4 rounded-2xl hover:opacity-90 shadow-lg uppercase tracking-widest text-xs transition-opacity">
+                    Solicitar essa Assinatura
+                  </button>
+                </div>
+              ))
+            )}
+
+            <button onClick={() => setModo('login_assinante')} className="w-full text-center text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase tracking-widest pt-4 transition-colors">
+              Já é assinante? Entre com seu telefone →
+            </button>
+          </div>
+        )}
+
         {modo === 'login_assinante' && (
           <div className="animate-in fade-in duration-500 space-y-6">
-            <div className="text-center mt-8">
+            <button onClick={() => setModo('planos')} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Ver Planos Disponíveis</button>
+            <div className="text-center mt-4">
               <h2 className="text-2xl font-black italic uppercase tracking-tighter text-[var(--cor-texto-principal)]">Área do <span className="text-[var(--cor-primaria)]">Assinante</span></h2>
             </div>
             <form onSubmit={fazerLogin} className="space-y-4">
@@ -564,9 +909,12 @@ export default function Cliente({ servicos }) {
                       </div>
                       
                       {isPendente && (
-                         <button 
-                           onClick={() => cancelarMeuAgendamento(ag)} 
-                           className="w-full mt-4 bg-[var(--cor-primaria)] bg-opacity-10 border border-[var(--cor-primaria)] text-[var(--cor-primaria)] hover:bg-[var(--cor-primaria)] hover:text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all"
+                         <button
+                           onClick={() => cancelarMeuAgendamento(ag)}
+                           // Mesmo bug do card de créditos: "bg-opacity-10" não fazia nada aqui,
+                           // então o botão saía com fundo vermelho 100% opaco e o texto (também
+                           // vermelho) ficava ilegível. Troquei pra "/10" (sintaxe do Tailwind v4).
+                           className="w-full mt-4 bg-[var(--cor-primaria)]/10 border border-[var(--cor-primaria)] text-[var(--cor-primaria)] hover:bg-[var(--cor-primaria)] hover:text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all"
                          >
                            Cancelar Agendamento
                          </button>
@@ -582,13 +930,13 @@ export default function Cliente({ servicos }) {
           <div className="space-y-6">
             
             {etapa === 1 && (
-              <div className="space-y-3 animate-in fade-in">
+              <div className="space-y-3 animate-in fade-in slide-in-from-right-4 duration-300">
                 <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Selecione o Corte</h2>
                 {listaParaMostrar.map(s => {
                   const estaIncluso = modo === 'assinante_logado' && (perfil.servicosInclusos.includes(s.nome) || s.isCombo)
                   const temSaldo = modo === 'assinante_logado' && perfil.cortesRestantes > 0
                   return (
-                    <div key={s.id} onClick={() => { setEscolha({...escolha, servico: s}); setEtapa(2); }} className={`bg-[var(--cor-card)] p-5 rounded-2xl border ${s.isCombo ? 'border-[var(--cor-primaria)] border-opacity-50' : 'border-[var(--cor-borda)]'} flex justify-between items-center hover:border-[var(--cor-primaria)] cursor-pointer group transition-colors`}>
+                    <div key={s.id} onClick={() => { setEscolha({...escolha, servico: s}); setEtapa(2); }} className={`bg-[var(--cor-card)] p-5 rounded-2xl border ${s.isCombo ? 'border-[var(--cor-primaria)]/50' : 'border-[var(--cor-borda)]'} flex justify-between items-center hover:border-[var(--cor-primaria)] cursor-pointer group transition-colors`}>
                       <div>
                         <p className="font-bold text-lg text-[var(--cor-texto-principal)] uppercase">{s.isCombo && <span className="text-[var(--cor-primaria)] mr-2">★</span>} {s.nome}</p>
                         <p className="text-xs text-[var(--cor-texto-secundario)] mt-1">{s.tempo} • <span className={`${estaIncluso && temSaldo ? 'text-green-500 font-black' : 'text-[var(--cor-primaria)] font-bold'}`}>{estaIncluso && temSaldo ? 'INCLUSO NO PLANO' : s.preco}</span></p>
@@ -601,11 +949,13 @@ export default function Cliente({ servicos }) {
             )}
 
             {etapa === 2 && (
-              <div className="space-y-4 animate-in slide-in-from-right">
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <button onClick={() => setEtapa(1)} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar</button>
                 <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Escolha o Profissional</h2>
                 
-                <div onClick={() => { setEscolha({...escolha, barbeiro: {id: 'qualquer', nome: 'Sem Preferência'}}); setEtapa(3); }} className="bg-[var(--cor-primaria)] bg-opacity-10 p-4 rounded-2xl border border-[var(--cor-primaria)] border-opacity-30 flex items-center gap-4 hover:bg-opacity-20 cursor-pointer group transition-all mb-2">
+                {/* Mesmo bug: fundo saía vermelho 100% opaco (bg-opacity-10 não tinha efeito)
+                    e o título "Qualquer um", também vermelho, ficava ilegível. */}
+                <div onClick={() => { setEscolha({...escolha, barbeiro: {id: 'qualquer', nome: 'Sem Preferência'}}); setEtapa(3); }} className="bg-[var(--cor-primaria)]/10 p-4 rounded-2xl border border-[var(--cor-primaria)]/30 flex items-center gap-4 hover:bg-[var(--cor-primaria)]/20 cursor-pointer group transition-all mb-2">
                   <div className="w-14 h-14 flex-shrink-0 bg-[var(--cor-primaria)] flex items-center justify-center rounded-full text-white">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                   </div>
@@ -625,7 +975,7 @@ export default function Cliente({ servicos }) {
             )}
 
             {etapa === 3 && (
-              <div className="space-y-4 animate-in slide-in-from-right">
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <button onClick={() => { setEtapa(2); setFeriadoSelecionado(null); }} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar</button>
                 <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Escolha o Dia</h2>
                 
@@ -683,8 +1033,15 @@ export default function Cliente({ servicos }) {
                           className={`aspect-square w-full rounded-2xl flex items-center justify-center text-sm font-bold transition-all relative
                             ${disponivel 
                               ? 'text-[var(--cor-texto-principal)] bg-[var(--cor-bg-geral)] hover:bg-[var(--cor-primaria)] hover:text-white hover:scale-105 border border-[var(--cor-borda)] hover:border-[var(--cor-primaria)] shadow-sm' 
-                              : eFeriado 
-                                ? 'border-2 border-[var(--cor-primaria)] text-[var(--cor-primaria)] bg-[var(--cor-primaria)] bg-opacity-10 animate-pulse cursor-pointer' 
+                              : eFeriado
+                                // BUG ENCONTRADO NO PASSEIO VISUAL: "bg-opacity-10" não combina
+                                // com "bg-[var(--cor-primaria)]" (utility antiga do Tailwind v3,
+                                // não funciona com cor arbitrária) — o dia de feriado saía com
+                                // fundo vermelho 100% opaco, e como o número também é vermelho
+                                // (text-[var(--cor-primaria)]), ficava invisível: exatamente o
+                                // "blob vermelho sem número" visto no calendário. Corrigido com
+                                // a sintaxe de opacidade do Tailwind v4 (/10).
+                                ? 'border-2 border-[var(--cor-primaria)] text-[var(--cor-primaria)] bg-[var(--cor-primaria)]/10 animate-pulse cursor-pointer'
                                 : 'text-[var(--cor-texto-secundario)] opacity-30 cursor-not-allowed'}`}
                         >
                           {dia.getDate()}
@@ -695,7 +1052,7 @@ export default function Cliente({ servicos }) {
                   </div>
                   
                   {feriadoSelecionado && (
-                    <div className="mt-6 p-4 bg-[var(--cor-primaria)] bg-opacity-10 border border-[var(--cor-primaria)] border-opacity-30 rounded-2xl animate-in fade-in zoom-in">
+                    <div className="mt-6 p-4 bg-[var(--cor-primaria)]/10 border border-[var(--cor-primaria)]/30 rounded-2xl animate-in fade-in zoom-in">
                       <div className="flex items-center gap-2 text-[var(--cor-primaria)] mb-1">
                         <Info size={16} />
                         <span className="text-[10px] font-black uppercase tracking-widest">Feriado Detectado</span>
@@ -709,7 +1066,7 @@ export default function Cliente({ servicos }) {
             )}
 
             {etapa === 4 && (
-              <div className="space-y-4 animate-in slide-in-from-right">
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
                 <button onClick={() => setEtapa(3)} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar para Dias</button>
                 <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Horários em {formatarDataAmigavel(escolha.data)}</h2>
                 <div className="grid grid-cols-3 gap-3">
@@ -729,11 +1086,34 @@ export default function Cliente({ servicos }) {
                   })}
                 </div>
                 {horariosGerados.length === 0 && <p className="text-center text-xs text-[var(--cor-texto-secundario)] mt-10">Nenhum horário disponível para este dia.</p>}
+
+                {horariosGerados.length > 0 && horariosOcupados.length > 0 && horariosGerados.every(h => horariosOcupados.includes(h)) && (
+                  <div className="mt-8 p-6 bg-[var(--cor-card)] rounded-3xl border border-[var(--cor-borda)] animate-in fade-in zoom-in">
+                    {naListaEspera ? (
+                      <div className="text-center">
+                        <p className="text-green-500 font-black uppercase text-sm">Você está na lista de espera!</p>
+                        <p className="text-xs text-[var(--cor-texto-secundario)] mt-2">Assim que um horário vagar nesse dia, avisaremos você.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-center text-[var(--cor-texto-principal)] font-black uppercase text-sm mb-1">Dia lotado</p>
+                        <p className="text-center text-xs text-[var(--cor-texto-secundario)] mb-5">Todos os horários deste dia já estão ocupados. Entre na lista de espera e avisaremos se algum vagar.</p>
+                        <div className="space-y-3">
+                          <input value={contato.telefone} onChange={e => setContato({...contato, telefone: e.target.value})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-4 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors text-sm" />
+                          <input value={contato.nome} onChange={e => setContato({...contato, nome: e.target.value})} placeholder="Seu Nome Completo" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-4 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors text-sm" />
+                          <button onClick={entrarNaFila} disabled={entrandoNaFila} className="w-full bg-[var(--cor-primaria)] text-white font-black py-4 rounded-2xl hover:opacity-90 shadow-lg uppercase tracking-widest text-xs transition-opacity">
+                            {entrandoNaFila ? 'Entrando...' : 'Entrar na Lista de Espera'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {etapa === 5 && (
-              <div className="space-y-6 animate-in slide-in-from-right">
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
                 <button onClick={() => setEtapa(4)} className="text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] text-[10px] font-black uppercase transition-colors">← Voltar aos Horários</button>
                 
                 <div className="bg-[var(--cor-card)] p-6 rounded-2xl border-l-4 border-l-[var(--cor-primaria)] border-[var(--cor-borda)] shadow-lg">

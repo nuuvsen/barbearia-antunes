@@ -1,14 +1,19 @@
 import { useState, useEffect } from 'react'
 import { db } from './firebase'
-import { collection, getDocs, doc, updateDoc, setDoc, query, where, deleteDoc, writeBatch } from 'firebase/firestore'
+import { collection, getDocs, doc, updateDoc, setDoc, query, where, deleteDoc, writeBatch, onSnapshot } from 'firebase/firestore'
 import Swal from 'sweetalert2'
 import toast from 'react-hot-toast'
+import { ehBloqueio, liberarHorario } from './bloqueioUtils'
+import Carregando from './Carregando'
 
 export default function AdminClientes() {
   const [clientes, setClientes] = useState([])
   const [planos, setPlanos] = useState([])
   const [salvando, setSalvando] = useState(false)
-  
+  const [carregando, setCarregando] = useState(true)
+  const [telefonesCadastrados, setTelefonesCadastrados] = useState(new Set())
+  const [saldoFiadoPorCliente, setSaldoFiadoPorCliente] = useState({})
+
   // ESTADO DA BUSCA
   const [termoBusca, setTermoBusca] = useState('')
   
@@ -23,71 +28,103 @@ export default function AdminClientes() {
   const [carregandoHistorico, setCarregandoHistorico] = useState(false)
 
   const carregarDados = async () => {
-    const snapPlanos = await getDocs(collection(db, "planos"))
-    const listaPlanos = snapPlanos.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status === 'Ativo')
-    setPlanos(listaPlanos)
+    setCarregando(true)
+    try {
+      const snapPlanos = await getDocs(collection(db, "planos"))
+      const listaPlanos = snapPlanos.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status === 'Ativo')
+      setPlanos(listaPlanos)
 
-    const snapAgendamentos = await getDocs(collection(db, "agendamentos"))
-    const statsAgendamentos = {}
-    
-    snapAgendamentos.docs.forEach(d => {
-      const tel = d.data().clienteTelefone
-      const dataVisita = d.data().data 
-      
-      if (!statsAgendamentos[tel]) {
-        statsAgendamentos[tel] = { total: 0, primeiraVisita: dataVisita }
-      }
-      
-      statsAgendamentos[tel].total += 1
-      if (dataVisita && dataVisita < statsAgendamentos[tel].primeiraVisita) {
-        statsAgendamentos[tel].primeiraVisita = dataVisita
-      }
-    })
+      const snapAgendamentos = await getDocs(collection(db, "agendamentos"))
+      // Exclui também os cancelados: um agendamento cancelado não é uma visita real
+      // e não deve contar pro selo VIP nem definir a data "Cliente desde"
+      // (mesmo critério já usado em AdminAgenda, AdminDashboard, PainelBarbeiro, Cliente.jsx e AdminGerencia)
+      const agendamentosReais = snapAgendamentos.docs.filter(d => !ehBloqueio(d.data()) && d.data().status !== 'Cancelado')
+      const statsAgendamentos = {}
 
-    const snapClientes = await getDocs(collection(db, "clientes"))
-    const mapaClientes = {}
-    snapClientes.docs.forEach(d => {
-      mapaClientes[d.id] = d.data() 
-    })
+      agendamentosReais.forEach(d => {
+        const tel = d.data().clienteTelefone
+        const dataVisita = d.data().data
+        if (!tel) return
 
-    const listaFinal = []
-    
-    for (const tel in mapaClientes) {
-      listaFinal.push({
-        telefone: tel,
-        nome: mapaClientes[tel].nome,
-        totalAtendimentos: statsAgendamentos[tel]?.total || 0,
-        primeiraVisita: statsAgendamentos[tel]?.primeiraVisita || null,
-        planoId: mapaClientes[tel].planoId || '',
-        planoNome: mapaClientes[tel].planoNome || '',
-        cortesRestantes: mapaClientes[tel].cortesRestantes || 0,
-        dataLimite: mapaClientes[tel].dataLimite || '' 
+        if (!statsAgendamentos[tel]) {
+          statsAgendamentos[tel] = { total: 0, primeiraVisita: dataVisita }
+        }
+
+        statsAgendamentos[tel].total += 1
+        if (dataVisita && dataVisita < statsAgendamentos[tel].primeiraVisita) {
+          statsAgendamentos[tel].primeiraVisita = dataVisita
+        }
       })
-    }
 
-    for (const tel in statsAgendamentos) {
-      if (!mapaClientes[tel]) {
-        const agendamentoDesseCliente = snapAgendamentos.docs.find(d => d.data().clienteTelefone === tel)
-        if(agendamentoDesseCliente) {
-          listaFinal.push({
-            telefone: tel,
-            nome: agendamentoDesseCliente.data().clienteNome,
-            totalAtendimentos: statsAgendamentos[tel].total,
-            primeiraVisita: statsAgendamentos[tel].primeiraVisita,
-            planoId: '',
-            planoNome: '',
-            cortesRestantes: 0,
-            dataLimite: ''
-          })
+      const snapClientes = await getDocs(collection(db, "clientes"))
+      const mapaClientes = {}
+      snapClientes.docs.forEach(d => {
+        mapaClientes[d.id] = d.data()
+      })
+      setTelefonesCadastrados(new Set(Object.keys(mapaClientes)))
+
+      const listaFinal = []
+
+      for (const tel in mapaClientes) {
+        listaFinal.push({
+          telefone: tel,
+          nome: mapaClientes[tel].nome,
+          totalAtendimentos: statsAgendamentos[tel]?.total || 0,
+          primeiraVisita: statsAgendamentos[tel]?.primeiraVisita || null,
+          planoId: mapaClientes[tel].planoId || '',
+          planoNome: mapaClientes[tel].planoNome || '',
+          cortesRestantes: mapaClientes[tel].cortesRestantes || 0,
+          dataLimite: mapaClientes[tel].dataLimite || ''
+        })
+      }
+
+      for (const tel in statsAgendamentos) {
+        if (!mapaClientes[tel]) {
+          const agendamentoDesseCliente = agendamentosReais.find(d => d.data().clienteTelefone === tel)
+          if (agendamentoDesseCliente) {
+            listaFinal.push({
+              telefone: tel,
+              nome: agendamentoDesseCliente.data().clienteNome,
+              totalAtendimentos: statsAgendamentos[tel].total,
+              primeiraVisita: statsAgendamentos[tel].primeiraVisita,
+              planoId: '',
+              planoNome: '',
+              cortesRestantes: 0,
+              dataLimite: ''
+            })
+          }
         }
       }
-    }
 
-    listaFinal.sort((a, b) => b.totalAtendimentos - a.totalAtendimentos)
-    setClientes(listaFinal)
+      listaFinal.sort((a, b) => b.totalAtendimentos - a.totalAtendimentos)
+      setClientes(listaFinal)
+    } catch (erro) {
+      console.error("Erro ao carregar clientes:", erro)
+      toast.error("Erro ao carregar clientes.")
+    }
+    setCarregando(false)
   }
 
   useEffect(() => { carregarDados() }, [])
+
+  // Soma o saldo em aberto de fiados por cliente (chave = telefone, ou o nome quando o
+  // fiado veio de uma comanda de balcão sem telefone cadastrado), pra mostrar o alerta
+  // de dívida direto na lista de clientes sem precisar abrir a tela "Contas a Receber".
+  useEffect(() => {
+    const q = query(collection(db, "fiados"))
+    const unsub = onSnapshot(q, (snap) => {
+      const mapa = {}
+      snap.docs.forEach(d => {
+        const f = d.data()
+        if (f.status === 'Quitado') return
+        const chave = f.clienteTelefone || f.clienteNome
+        if (!chave) return
+        mapa[chave] = (mapa[chave] || 0) + Number(f.saldo || 0)
+      })
+      setSaldoFiadoPorCliente(mapa)
+    })
+    return () => unsub()
+  }, [])
 
   const excluirCliente = async (cliente) => {
     const result = await Swal.fire({
@@ -106,7 +143,21 @@ export default function AdminClientes() {
         await deleteDoc(doc(db, "clientes", cliente.telefone))
         const q = query(collection(db, "agendamentos"), where("clienteTelefone", "==", cliente.telefone))
         const snap = await getDocs(q)
-        
+
+        // Libera as travas de horário dos agendamentos ainda ativos ANTES de excluí-los.
+        // Sem isso, um agendamento futuro (Pendente/Bloqueado) apagado aqui deixaria a
+        // trava em "travasHorario" órfã pra sempre, bloqueando aquele horário
+        // permanentemente mesmo sem nenhum agendamento real ocupando ele
+        // (mesmo problema já corrigido na renomeação de barbeiro em AdminBarbeiros.jsx).
+        const paraLiberar = snap.docs.filter(d => {
+          const status = d.data().status
+          return status === 'Pendente' || status === 'Bloqueado'
+        })
+        await Promise.all(paraLiberar.map(d => {
+          const dados = d.data()
+          return liberarHorario(dados.barbeiro, dados.data, dados.hora)
+        }))
+
         const batch = writeBatch(db)
         snap.docs.forEach((d) => {
           batch.delete(d.ref)
@@ -158,8 +209,17 @@ export default function AdminClientes() {
   const salvar = async (e) => {
     e.preventDefault()
     if (!form.nome || !form.telefone) return
+
+    const telefoneLimpo = form.telefone.trim()
+    const telefoneMudou = telefoneLimpo !== form.telefoneAntigo
+
+    if (telefoneMudou && telefonesCadastrados.has(telefoneLimpo)) {
+      toast.error(`Já existe um cliente cadastrado com o telefone ${telefoneLimpo}. Edite o cliente existente em vez de criar um duplicado.`)
+      return
+    }
+
     setSalvando(true)
-    
+
     try {
       let planoNome = ''
       if (form.planoId) {
@@ -167,19 +227,19 @@ export default function AdminClientes() {
         planoNome = planoEscolhido.nome
       }
 
-      await setDoc(doc(db, "clientes", form.telefone), {
+      await setDoc(doc(db, "clientes", telefoneLimpo), {
         nome: form.nome,
-        telefone: form.telefone,
+        telefone: telefoneLimpo,
         planoId: form.planoId,
         planoNome: planoNome,
         cortesRestantes: form.cortesRestantes,
         dataLimite: form.dataLimite || null
       }, { merge: true })
 
-      if (form.telefoneAntigo && form.telefone !== form.telefoneAntigo) {
+      if (form.telefoneAntigo && telefoneMudou) {
         const q = query(collection(db, "agendamentos"), where("clienteTelefone", "==", form.telefoneAntigo))
         const snap = await getDocs(q)
-        const promessas = snap.docs.map(d => updateDoc(doc(db, "agendamentos", d.id), { clienteNome: form.nome, clienteTelefone: form.telefone }))
+        const promessas = snap.docs.map(d => updateDoc(doc(db, "agendamentos", d.id), { clienteNome: form.nome, clienteTelefone: telefoneLimpo }))
         await Promise.all(promessas)
         await deleteDoc(doc(db, "clientes", form.telefoneAntigo))
       }
@@ -241,17 +301,18 @@ export default function AdminClientes() {
     }
   }
 
-  const formatarWhatsApp = (numero) => `https://wa.me/55${numero.replace(/\D/g, '')}`
-  
+  const formatarWhatsApp = (numero) => numero ? `https://wa.me/55${numero.replace(/\D/g, '')}` : '#'
+
   const formatarDataBR = (dataString) => {
     if (!dataString) return 'Sem visitas'
     const [ano, mes, dia] = dataString.split('-')
+    if (!ano || !mes || !dia) return 'Sem visitas'
     return `${dia}/${mes}/${ano}`
   }
 
-  const clientesFiltrados = clientes.filter(c => 
-    c.nome.toLowerCase().includes(termoBusca.toLowerCase()) || 
-    c.telefone.includes(termoBusca)
+  const clientesFiltrados = clientes.filter(c =>
+    (c.nome || '').toLowerCase().includes(termoBusca.toLowerCase()) ||
+    (c.telefone || '').includes(termoBusca)
   )
 
   return (
@@ -298,19 +359,34 @@ export default function AdminClientes() {
             </tr>
           </thead>
           <tbody>
-            {clientesFiltrados.length === 0 && (
+            {carregando ? (
+              <tr>
+                <td colSpan="3">
+                  <Carregando tela={false} label="Carregando clientes..." />
+                </td>
+              </tr>
+            ) : clientesFiltrados.length === 0 ? (
               <tr>
                 <td colSpan="3" className="p-10 text-center text-[var(--cor-texto-secundario)] font-bold uppercase italic">
                   {termoBusca ? `Nenhum cliente encontrado para "${termoBusca}".` : "Nenhum cliente cadastrado."}
                 </td>
               </tr>
-            )}
-            {clientesFiltrados.map((c, i) => (
+            ) : clientesFiltrados.map((c, i) => {
+              // Comandas de balcão (fiado sem telefone, só nome digitado na hora) não batem
+              // pelo telefone — sem esse fallback pelo nome, o selo de Fiado nunca aparecia
+              // pra nenhum cliente fiado que veio de uma Comanda avulsa (o caso mais comum).
+              const saldoFiadoCliente = (c.telefone && saldoFiadoPorCliente[c.telefone]) || saldoFiadoPorCliente[c.nome] || 0
+              return (
               <tr key={i} className="border-b border-[var(--cor-borda)] hover:bg-[var(--cor-bg-geral)] transition-colors group text-[var(--cor-texto-principal)]">
                 <td className="p-5">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <p className="font-bold text-lg uppercase tracking-tighter">{c.nome}</p>
                     {c.totalAtendimentos >= 3 && <span className="bg-yellow-500/20 text-yellow-500 text-[10px] px-2 py-1 rounded-full font-black uppercase tracking-widest border border-yellow-500/30">VIP</span>}
+                    {saldoFiadoCliente > 0 && (
+                      <span className="bg-orange-500/20 text-orange-500 text-[10px] px-2 py-1 rounded-full font-black uppercase tracking-widest border border-orange-500/30">
+                        Fiado: R$ {saldoFiadoCliente.toFixed(2).replace('.', ',')}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-[var(--cor-texto-secundario)] mt-1 font-bold">
                     {c.telefone} <span className="mx-2">•</span> {c.totalAtendimentos} visitas <span className="mx-2">•</span> Cliente desde: <span className="opacity-70">{formatarDataBR(c.primeiraVisita)}</span>
@@ -337,9 +413,15 @@ export default function AdminClientes() {
                 </td>
                 
                 <td className="p-5 text-right space-x-2 flex justify-end">
-                  <a href={formatarWhatsApp(c.telefone)} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center p-2 bg-[var(--cor-bg-geral)] rounded-lg hover:bg-green-600 text-[var(--cor-texto-principal)] transition-all w-10 h-10" title="Chamar no Zap">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                  </a>
+                  {c.telefone ? (
+                    <a href={formatarWhatsApp(c.telefone)} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center p-2 bg-[var(--cor-bg-geral)] rounded-lg hover:bg-green-600 text-[var(--cor-texto-principal)] transition-all w-10 h-10" title="Chamar no Zap">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                    </a>
+                  ) : (
+                    <span className="inline-flex items-center justify-center p-2 bg-[var(--cor-bg-geral)] rounded-lg opacity-30 cursor-not-allowed text-[var(--cor-texto-principal)] w-10 h-10" title="Sem telefone">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                    </span>
+                  )}
                   
                   <button onClick={() => verHistorico(c)} className="inline-flex items-center justify-center p-2 bg-[var(--cor-bg-geral)] rounded-lg hover:bg-blue-600 text-[var(--cor-texto-principal)] transition-all w-10 h-10 ml-2" title="Ver Histórico">
                     📋
@@ -353,7 +435,8 @@ export default function AdminClientes() {
                   </button>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
