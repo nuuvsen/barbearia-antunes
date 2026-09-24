@@ -737,51 +737,55 @@ export default function Cliente({ servicos }) {
     <div style={themeStyles} className="min-h-screen w-full bg-[var(--cor-bg-geral)] text-[var(--cor-texto-principal)] font-sans transition-colors duration-300">
       <div className="max-w-md mx-auto p-6 min-h-screen pb-24">
         
-        <header className="flex justify-between items-center mb-6 pt-4">
-          <div onClick={() => window.location.reload()} className="cursor-pointer">
-            <h1 className="text-2xl font-black italic text-[var(--cor-primaria)] tracking-tighter uppercase">Antunes</h1>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            {/* BOTÃO DE INVERTER TEMA */}
-            <button 
-              onClick={() => setIsDark(!isDark)} 
-              className="p-2 bg-[var(--cor-card)] border border-[var(--cor-borda)] rounded-lg text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] transition-all flex items-center justify-center"
-              title="Alternar Tema"
-            >
-              {isDark ? '☀️' : '🌙'}
-            </button>
+        <header className="mb-6 pt-4">
+          <div className="flex justify-between items-center">
+            <div onClick={() => window.location.reload()} className="cursor-pointer">
+              <h1 className="text-2xl font-black italic text-[var(--cor-primaria)] tracking-tighter uppercase">Antunes</h1>
+            </div>
 
-            {/* BOTÃO DE ATIVAR NOTIFICAÇÕES PUSH */}
-            <button 
-              onClick={clicarAtivarNotificacoes} 
-              className="p-2 bg-[var(--cor-card)] border border-[var(--cor-borda)] rounded-lg text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] transition-all flex items-center justify-center"
-              title="Ativar Notificações"
-            >
-              <Bell size={16} />
-            </button>
-
-            {modo === 'agendamento' ? (
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => setModo('login_historico')} 
-                  className="text-[9px] bg-[var(--cor-card)] border border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:text-[var(--cor-texto-principal)] hover:border-[var(--cor-texto-secundario)] transition-all"
-                >
-                  Agendamentos
-                </button>
-                <button 
-                  onClick={() => setModo('planos')} 
-                  className="text-[9px] bg-[var(--cor-primaria)] text-white font-black px-3 py-2 rounded-lg uppercase tracking-widest hover:opacity-90 shadow-lg"
-                >
-                  Assinaturas
-                </button>
-              </div>
-            ) : (
-              <button onClick={sairOuVoltar} className="text-[10px] bg-[var(--cor-card)] border border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] font-black px-3 py-2 rounded-lg uppercase tracking-widest">
-                {modo === 'assinante_logado' || modo === 'historico' ? 'Sair' : 'Voltar ao Início'}
+            <div className="flex items-center gap-2">
+              {/* BOTÃO DE INVERTER TEMA */}
+              <button 
+                onClick={() => setIsDark(!isDark)} 
+                className="p-2 bg-[var(--cor-card)] border border-[var(--cor-borda)] rounded-lg text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] transition-all flex items-center justify-center"
+                title="Alternar Tema"
+              >
+                {isDark ? '☀️' : '🌙'}
               </button>
-            )}
+
+              {/* BOTÃO DE ATIVAR NOTIFICAÇÕES PUSH */}
+              <button 
+                onClick={clicarAtivarNotificacoes} 
+                className="p-2 bg-[var(--cor-card)] border border-[var(--cor-borda)] rounded-lg text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] transition-all flex items-center justify-center"
+                title="Ativar Notificações"
+              >
+                <Bell size={16} />
+              </button>
+
+              {modo !== 'agendamento' && (
+                <button onClick={sairOuVoltar} className="text-[10px] bg-[var(--cor-card)] border border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] hover:text-[var(--cor-texto-principal)] font-black px-3 py-2 rounded-lg uppercase tracking-widest">
+                  {modo === 'assinante_logado' || modo === 'historico' ? 'Sair' : 'Voltar ao Início'}
+                </button>
+              )}
+            </div>
           </div>
+
+          {modo === 'agendamento' && (
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <button 
+                onClick={() => setModo('login_historico')} 
+                className="text-[10px] bg-[var(--cor-card)] border border-[var(--cor-borda)] text-[var(--cor-texto-secundario)] font-black px-3 py-2.5 rounded-lg uppercase tracking-widest hover:text-[var(--cor-texto-principal)] hover:border-[var(--cor-texto-secundario)] transition-all text-center"
+              >
+                Agendamentos
+              </button>
+              <button 
+                onClick={() => setModo('planos')} 
+                className="text-[10px] bg-[var(--cor-primaria)] text-white font-black px-3 py-2.5 rounded-lg uppercase tracking-widest hover:opacity-90 shadow-lg text-center"
+              >
+                Assinaturas
+              </button>
+            </div>
+          )}
         </header>
 
         {modo === 'assinante_logado' && perfil && (
