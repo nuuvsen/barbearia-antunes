@@ -1,6 +1,6 @@
 {
-  "short_name": "Antunes",
-  "name": "Antunes Barbearia",
+  "short_name": "Antunes Team",
+  "name": "Antunes Team",
   "icons": [
     {
       "src": "icon-192x192.png",
@@ -15,7 +15,7 @@
       "purpose": "any"
     }
   ],
-  "start_url": ".",
+  "start_url": "/barbeiro",
   "display": "standalone",
   "theme_color": "#000000",
   "background_color": "#ffffff"

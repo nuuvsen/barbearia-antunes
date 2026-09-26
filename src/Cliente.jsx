@@ -1022,6 +1022,11 @@ export default function Cliente({ servicos }) {
                       const feriadoInfo = feriados.find(f => f.date === formatoAPI);
                       const eFeriado = configAgenda?.feriadosAtivos && !!feriadoInfo;
                       const disponivel = checarDisponibilidade(dia);
+                      // Destaca o dia de HOJE no calendário (comparando ano/mês/dia, não o
+                      // objeto Date inteiro — evita diferenças de horário/fuso).
+                      const ehHoje = dia.getFullYear() === hoje.getFullYear()
+                        && dia.getMonth() === hoje.getMonth()
+                        && dia.getDate() === hoje.getDate();
                       
                       return (
                         <button 
@@ -1035,6 +1040,7 @@ export default function Cliente({ servicos }) {
                             }
                           }} 
                           className={`aspect-square w-full rounded-2xl flex items-center justify-center text-sm font-bold transition-all relative
+                            ${ehHoje ? 'ring-2 ring-[var(--cor-primaria)] ring-offset-2 ring-offset-[var(--cor-bg-geral)]' : ''}
                             ${disponivel 
                               ? 'text-[var(--cor-texto-principal)] bg-[var(--cor-bg-geral)] hover:bg-[var(--cor-primaria)] hover:text-white hover:scale-105 border border-[var(--cor-borda)] hover:border-[var(--cor-primaria)] shadow-sm' 
                               : eFeriado
@@ -1050,6 +1056,7 @@ export default function Cliente({ servicos }) {
                         >
                           {dia.getDate()}
                           {eFeriado && <span className="absolute -top-1 -right-1 w-2 h-2 bg-[var(--cor-primaria)] rounded-full"></span>}
+                          {ehHoje && <span className="absolute -bottom-1 text-[7px] font-black tracking-widest text-[var(--cor-primaria)] uppercase">Hoje</span>}
                         </button>
                       )
                     })}
