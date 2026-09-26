@@ -15,11 +15,11 @@ import RequireAdminAuth from './RequireAdminAuth'
 
 // Este mesmo build/container atende dois domínios diferentes (ver index.html):
 // o principal (site do cliente) e um subdomínio próprio pro barbeiro
-// (teamantunes.app.nuuvsen.com.br). Usamos subdomínio em vez de só um caminho
+// (teamantunes.nuuvsen.com.br). Usamos subdomínio em vez de só um caminho
 // porque o Chrome/Android não deixa instalar dois PWAs separados numa mesma
 // origem — assim os dois apps instalados ficam de verdade independentes.
 const EH_DOMINIO_BARBEIRO = typeof window !== 'undefined'
-  && window.location.hostname === 'teamantunes.app.nuuvsen.com.br'
+  && window.location.hostname === 'teamantunes.nuuvsen.com.br'
 
 export default function App() {
   const [servicos, setServicos] = useState([])
