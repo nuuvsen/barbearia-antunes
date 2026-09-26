@@ -13,6 +13,14 @@ import PainelBarbeiro from './PainelBarbeiro'
 import SuperAdmin from './SuperAdmin'
 import RequireAdminAuth from './RequireAdminAuth'
 
+// Este mesmo build/container atende dois domínios diferentes (ver index.html):
+// o principal (site do cliente) e um subdomínio próprio pro barbeiro
+// (teamantunes.app.nuuvsen.com.br). Usamos subdomínio em vez de só um caminho
+// porque o Chrome/Android não deixa instalar dois PWAs separados numa mesma
+// origem — assim os dois apps instalados ficam de verdade independentes.
+const EH_DOMINIO_BARBEIRO = typeof window !== 'undefined'
+  && window.location.hostname === 'teamantunes.app.nuuvsen.com.br'
+
 export default function App() {
   const [servicos, setServicos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -135,7 +143,7 @@ export default function App() {
       />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Cliente servicos={servicos} />} />
+          <Route path="/" element={EH_DOMINIO_BARBEIRO ? <PainelBarbeiro /> : <Cliente servicos={servicos} />} />
           <Route path="/admin" element={
             <RequireAdminAuth configDoc="acessoAdmin" titulo="Acesso Restrito — Painel Admin">
               {/* BotMonitor fica só aqui dentro (painel admin logado). Antes ele estava

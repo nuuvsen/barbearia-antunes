@@ -1,6 +1,7 @@
 {
   "short_name": "Antunes",
   "name": "Antunes Barbearia",
+  "id": "/",
   "icons": [
     {
       "src": "icon-192x192.png",
@@ -18,5 +19,6 @@
   "start_url": ".",
   "display": "standalone",
   "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "background_color": "#ffffff",
+  "scope": "/"
 }
