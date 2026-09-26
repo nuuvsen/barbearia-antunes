@@ -84,6 +84,13 @@ const PRESETS = [
 export default function Personalizacao() {
   const [tema, setTema] = useState(TEMA_PADRAO)
   const [salvando, setSalvando] = useState(false)
+  // Upload de favicon direto do computador (em vez de precisar colar uma URL) — mesmo
+  // esquema de upload usado em AdminProdutos.jsx (ImgBB). "previewFavicon" é o que mostra
+  // na miniatura/aba do navegador ANTES de salvar (arquivo local recém-escolhido ou a URL
+  // que já estava salva no Firebase); "arquivoFavicon" só existe quando tem um upload
+  // pendente pra mandar pro ImgBB no momento de salvar.
+  const [arquivoFavicon, setArquivoFavicon] = useState(null)
+  const [previewFavicon, setPreviewFavicon] = useState('')
 
   const aplicarCoresNoSistema = (cores) => {
     if (!cores) return;
@@ -114,7 +121,10 @@ export default function Personalizacao() {
           const dadosFirebase = docSnap.data();
           setTema(dadosFirebase);
           aplicarCoresNoSistema(dadosFirebase.cores);
-          if (dadosFirebase.favicon) atualizarFavicon(dadosFirebase.favicon);
+          if (dadosFirebase.favicon) {
+            setPreviewFavicon(dadosFirebase.favicon);
+            atualizarFavicon(dadosFirebase.favicon);
+          }
         }
       } catch (error) {
         console.error("Erro ao carregar tema do Firebase:", error);
@@ -140,7 +150,26 @@ export default function Personalizacao() {
       link.rel = 'icon';
       document.head.appendChild(link);
     }
-    link.href = url;
+    if (url) {
+      link.href = url;
+      // Remove o "type" fixo (image/svg+xml, do favicon padrão) — com ele presente, o
+      // navegador pode recusar exibir um favicon customizado que não seja SVG.
+      link.removeAttribute('type');
+    } else {
+      link.href = '/favicon.svg';
+      link.setAttribute('type', 'image/svg+xml');
+    }
+  }
+
+  // Recebe o arquivo escolhido no seletor e já mostra ele na aba/miniatura na hora —
+  // o upload de verdade pro ImgBB só acontece quando o admin clicar em "Salvar Alterações".
+  const handleFaviconFile = (e) => {
+    const arquivo = e.target.files?.[0];
+    if (!arquivo) return;
+    setArquivoFavicon(arquivo);
+    const urlLocal = URL.createObjectURL(arquivo);
+    setPreviewFavicon(urlLocal);
+    atualizarFavicon(urlLocal);
   }
 
   const handleCorChange = (campo, valor) => {
@@ -165,13 +194,44 @@ export default function Personalizacao() {
   const salvarPersonalizacao = async () => {
     setSalvando(true);
     try {
-      await setDoc(doc(db, "configuracoes", "personalizacao"), tema);
-      localStorage.setItem('tema_customizado', JSON.stringify(tema.cores));
-      if (tema.favicon) localStorage.setItem('favicon_customizado', tema.favicon);
+      let temaParaSalvar = tema;
+
+      // Mesma lógica de upload do AdminProdutos.jsx: manda o arquivo pro ImgBB e troca a
+      // URL do favicon pela URL pública que ele devolve.
+      if (arquivoFavicon) {
+        const IMGBB_API_KEY = import.meta.env.VITE_IMGBB_API_KEY;
+        if (!IMGBB_API_KEY) {
+          toast.error("Chave do ImgBB não configurada (VITE_IMGBB_API_KEY ausente no .env).");
+          setSalvando(false);
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('image', arquivoFavicon);
+
+        const respostaImgbb = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+          method: 'POST',
+          body: formData
+        });
+        const dadosRetorno = await respostaImgbb.json();
+
+        if (!dadosRetorno.success) {
+          throw new Error("Falha ao fazer upload do favicon.");
+        }
+
+        temaParaSalvar = { ...tema, favicon: dadosRetorno.data.url };
+        setTema(temaParaSalvar);
+        setPreviewFavicon(dadosRetorno.data.url);
+        setArquivoFavicon(null);
+      }
+
+      await setDoc(doc(db, "configuracoes", "personalizacao"), temaParaSalvar);
+      localStorage.setItem('tema_customizado', JSON.stringify(temaParaSalvar.cores));
+      if (temaParaSalvar.favicon) localStorage.setItem('favicon_customizado', temaParaSalvar.favicon);
       toast.success("Identidade visual salva com sucesso!");
     } catch (e) {
       console.error(e);
-      toast.error("Erro ao salvar no banco de dados.");
+      toast.error(e.message || "Erro ao salvar no banco de dados.");
     }
     setSalvando(false);
   }
@@ -180,6 +240,9 @@ export default function Personalizacao() {
     if(window.confirm("Deseja voltar para as cores originais?")) {
       setTema(TEMA_PADRAO);
       aplicarCoresNoSistema(TEMA_PADRAO.cores);
+      setArquivoFavicon(null);
+      setPreviewFavicon('');
+      atualizarFavicon('');
       localStorage.removeItem('tema_customizado');
       localStorage.removeItem('favicon_customizado');
     }
@@ -231,17 +294,33 @@ export default function Personalizacao() {
             <h3 className="text-[10px] font-black uppercase tracking-[0.2em] mb-4 flex items-center gap-2" style={{ color: 'var(--cor-texto-secundario)' }}>
               <ImageIcon size={14} /> Ícone da Aba (Favicon)
             </h3>
-            <input 
-              type="text" 
-              placeholder="URL da imagem (Ex: https://sua-logo.png)"
-              value={tema.favicon}
-              onChange={(e) => {
-                setTema({...tema, favicon: e.target.value});
-                atualizarFavicon(e.target.value);
-              }}
-              className="w-full bg-black/5 dark:bg-black/20 border p-4 rounded-xl outline-none focus:ring-1 text-sm transition-all"
-              style={{ borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}
-            />
+            <div className="flex items-center gap-4">
+              <div
+                className="w-14 h-14 rounded-xl overflow-hidden border flex items-center justify-center flex-shrink-0"
+                style={{ borderColor: 'var(--cor-borda)', backgroundColor: 'var(--cor-bg-geral)' }}
+              >
+                {previewFavicon
+                  ? <img src={previewFavicon} className="w-full h-full object-cover" alt="Favicon" />
+                  : <ImageIcon size={20} style={{ color: 'var(--cor-texto-secundario)' }} />}
+              </div>
+              <label className="flex-1 cursor-pointer">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFaviconFile}
+                  className="hidden"
+                />
+                <div
+                  className="w-full bg-black/5 dark:bg-black/20 border p-4 rounded-xl text-sm text-center font-bold truncate transition-all hover:opacity-80"
+                  style={{ borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-secundario)' }}
+                >
+                  {arquivoFavicon ? arquivoFavicon.name : 'Escolher imagem do computador...'}
+                </div>
+              </label>
+            </div>
+            <p className="text-[10px] mt-2 opacity-60" style={{ color: 'var(--cor-texto-secundario)' }}>
+              A imagem é enviada e salva no servidor ao clicar em "Salvar Alterações".
+            </p>
           </div>
 
           <div className="p-6 rounded-[2rem] border space-y-4" style={{ backgroundColor: 'var(--cor-card)', borderColor: 'var(--cor-borda)' }}>
@@ -304,7 +383,7 @@ export default function Personalizacao() {
                 <div className="flex items-center justify-between pb-6 mb-6 border-b" style={{ borderColor: tema.cores.borda }}>
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden" style={{ backgroundColor: tema.cores.primaria }}>
-                      {tema.favicon && <img src={tema.favicon} className="w-full h-full object-cover" alt="Favicon" />}
+                      {previewFavicon && <img src={previewFavicon} className="w-full h-full object-cover" alt="Favicon" />}
                     </div>
                     <span className="font-black italic uppercase text-xs" style={{ color: tema.cores.texto }}>
                       Antunes<span style={{ color: tema.cores.primaria }}>.OS</span>

@@ -4,6 +4,7 @@ import { db } from './firebase'
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore'
 import { Toaster } from 'react-hot-toast';
 import BotMonitor from './BotMonitor';
+import ConnectionBanner from './ConnectionBanner';
 
 // Importação dos componentes
 import Cliente from './Cliente'
@@ -31,15 +32,22 @@ export default function App() {
     root.style.setProperty('--cor-texto-principal', cores.texto);
     root.style.setProperty('--cor-texto-secundario', cores.textoSecundario);
 
-    // Atualiza o Favicon
+    // Atualiza o Favicon — mesmo fix do Personalizacao.jsx: sem o removeAttribute('type'),
+    // um favicon customizado que não seja SVG podia simplesmente não aparecer (o <link>
+    // continuava anunciado como image/svg+xml pro navegador). E quando não tem favicon
+    // customizado (campo vazio/resetado), volta pro ícone padrão em vez de não fazer nada.
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
     if (favicon) {
-      let link = document.querySelector("link[rel~='icon']");
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'icon';
-        document.head.appendChild(link);
-      }
       link.href = favicon;
+      link.removeAttribute('type');
+    } else {
+      link.href = '/favicon.svg';
+      link.setAttribute('type', 'image/svg+xml');
     }
 
     // Salva no cache local para o próximo carregamento ser instantâneo
@@ -104,6 +112,10 @@ export default function App() {
 
   return (
     <>
+      {/* Aviso de "sem conexão" — fica de fora do BrowserRouter, então aparece em
+          QUALQUER rota (cliente, /admin, /barbeiro, /superadmin) sem precisar duplicar. */}
+      <ConnectionBanner />
+
       {/* 2. O Toaster injeta os avisos flutuantes em todas as telas do site */}
       <Toaster 
         position="top-right" 
