@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { CheckCircle, Bot, QrCode, Power, RefreshCcw, Bell, Clock, MessageSquare, Plus, Trash2, Save, Loader2, Megaphone, Send, UserSearch, Star } from 'lucide-react'
+import { CheckCircle, Bot, QrCode, Power, RefreshCcw, RotateCw, Bell, Clock, MessageSquare, Plus, Trash2, Save, Loader2, Megaphone, Send, UserSearch, Star } from 'lucide-react'
 import toast from 'react-hot-toast' // <-- Adicionado o import do toast que estava faltando!
 import { db } from './firebase'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { BOT_URL } from './botConfig'
+import Carregando from './Carregando'
 
 export default function GerenciadorBot() {
   const [botStatus, setBotStatus] = useState('desconectado')
@@ -11,14 +12,18 @@ export default function GerenciadorBot() {
   const [carregandoConfig, setCarregandoConfig] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [novoHorario, setNovoHorario] = useState('')
+  const [reiniciandoBot, setReiniciandoBot] = useState(false)
 
   const [mensagemCampanha, setMensagemCampanha] = useState('')
   const [enviandoCampanha, setEnviandoCampanha] = useState(false)
+  const [progressoCampanha, setProgressoCampanha] = useState(null) // { emAndamento, total, enviados, falhas }
 
   // ESTADO ATUALIZADO COM TODAS AS CONFIGURAÇÕES (Lembretes, Radar e NPS)
   const [config, setConfig] = useState({
     lembretesAtivos: true,
     horarios: ['09:00', '18:00'],
+    lembreteAntecedenciaAtivo: false,
+    lembreteAntecedenciaMinutos: 60,
     msgConfirmacao: '✅ *Olá, {nome}!* Seu agendamento foi confirmado com sucesso!\n\n✂️ *Serviço:* {servico}\n📅 *Data:* {data}\n⏰ *Horário:* {hora}\n💈 *Profissional:* {barbeiro}\n\nTe esperamos na Barbearia Antunes!',
     msgLembrete: '⏰ *Olá, {nome}!* Passando para lembrar do seu agendamento hoje às *{hora}* na Barbearia Antunes.\n\nCaso não possa comparecer, responda *Menu* e selecione cancelar.',
     
@@ -30,7 +35,10 @@ export default function GerenciadorBot() {
     // ⭐ AVALIAÇÃO PÓS-CORTE (NPS)
     npsAtivo: true,
     npsTempoMinutos: 30,
-    msgNPS: 'Olá, {nome}! Esperamos que tenha curtido o seu visual hoje na Barbearia Antunes. ✂️\n\nComo foi o seu atendimento com o profissional *{barbeiro}*?\n\nResponda a esta mensagem com uma nota de *1 a 5* ⭐ para nos ajudar a manter a qualidade lá em cima!'
+    msgNPS: 'Olá, {nome}! Esperamos que tenha curtido o seu visual hoje na Barbearia Antunes. ✂️\n\nComo foi o seu atendimento com o profissional *{barbeiro}*?\n\nResponda a esta mensagem com uma nota de *1 a 5* ⭐ para nos ajudar a manter a qualidade lá em cima!',
+
+    // 🕐 LISTA DE ESPERA (modo "bot" — ver Configurações → Lista de Espera pra escolher o modo)
+    msgListaEspera: '🎉 *Boa notícia, {nome}!* Um horário vagou na Barbearia Antunes e você é o próximo da lista de espera!\n\n✂️ *Serviço:* {servico}\n📅 *Data:* {data}\n⏰ *Horário:* {hora}\n💈 *Profissional:* {barbeiro}\n\nVocê ainda quer esse horário?\n\n*1* - Sim, quero!\n*2* - Não, obrigado'
   })
 
   useEffect(() => {
@@ -66,6 +74,56 @@ export default function GerenciadorBot() {
     const intervalo = setInterval(buscarStatusBot, 3000)
     return () => clearInterval(intervalo)
   }, [])
+
+  const buscarProgressoCampanha = async () => {
+    try {
+      const resposta = await fetch(`${BOT_URL}/api/bot/campanha/status`)
+      const dados = await resposta.json()
+      setProgressoCampanha(dados)
+      return dados
+    } catch (erro) {
+      return null
+    }
+  }
+
+  useEffect(() => {
+    // Ao abrir a tela, checa se já existe um disparo em andamento (ex: o painel foi
+    // recarregado no meio de uma campanha) e, se sim, já religa a barra de progresso.
+    buscarProgressoCampanha().then(dados => {
+      if (dados?.emAndamento) setEnviandoCampanha(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!enviandoCampanha) return
+    const intervalo = setInterval(async () => {
+      const dados = await buscarProgressoCampanha()
+      if (dados && !dados.emAndamento) {
+        setEnviandoCampanha(false)
+      }
+    }, 1500)
+    return () => clearInterval(intervalo)
+  }, [enviandoCampanha])
+
+  const reiniciarBot = async () => {
+    setReiniciandoBot(true)
+    try {
+      const resposta = await fetch(`${BOT_URL}/api/bot/reiniciar`, { method: 'POST' })
+      const dados = await resposta.json().catch(() => ({}))
+      if (resposta.ok && dados.ok) {
+        toast.success("Reiniciando o bot... acompanhe o status abaixo.")
+        buscarStatusBot()
+      } else {
+        toast.error(dados.erro || "Não foi possível reiniciar o bot.")
+      }
+    } catch (erro) {
+      toast.error("Não consegui falar com o servidor do bot. Ele precisa estar rodando (Docker/terminal) para poder ser reiniciado.")
+    }
+    // Dá um respiro antes de liberar o botão de novo, pra não deixar
+    // clicarem várias vezes seguidas enquanto o painel ainda nem
+    // atualizou o status via polling.
+    setTimeout(() => setReiniciandoBot(false), 4000)
+  }
 
   const adicionarHorario = () => {
     if (!novoHorario) return
@@ -105,12 +163,14 @@ export default function GerenciadorBot() {
       })
       
       const data = await res.json()
-      
+
       if (data.success) {
-        toast.success("✅ Campanha iniciada com sucesso! Acompanhe o envio no terminal do Node.")
+        toast.success("✅ Campanha iniciada! Acompanhe o progresso abaixo.")
         setMensagemCampanha('')
+        buscarProgressoCampanha()
+        return // mantém enviandoCampanha=true; o polling acima desliga sozinho no final
       } else {
-        toast.error("Erro ao iniciar campanha: " + data.error)
+        toast.error(data.error || "Erro ao iniciar campanha.")
       }
     } catch (error) {
       toast.error("Erro ao se comunicar com o servidor do bot.")
@@ -118,11 +178,7 @@ export default function GerenciadorBot() {
     setEnviandoCampanha(false)
   }
 
-  if (carregandoConfig) return (
-    <div className="flex justify-center items-center h-40">
-      <Loader2 className="animate-spin" size={32} style={{ color: 'var(--cor-primaria)' }} />
-    </div>
-  )
+  if (carregandoConfig) return <Carregando tela={false} label="Carregando..." />;
 
   return (
     /* LARGURA MAXIMA EXPANDIDA (max-w-[1600px]) PARA COBRIR TELAS LARGAS */
@@ -149,18 +205,26 @@ export default function GerenciadorBot() {
             <div className="border p-6 rounded-3xl" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
               <h3 className="text-[10px] font-black uppercase tracking-[0.2em] mb-4" style={{ color: 'var(--cor-texto-secundario)' }}>Status da Conexão</h3>
               <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${botStatus === 'conectado' ? 'bg-green-500 animate-pulse' : botStatus === 'aguardando_qr' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`} />
+                <div className={`w-3 h-3 rounded-full ${botStatus === 'conectado' ? 'bg-green-500 animate-pulse' : botStatus === 'aguardando_qr' ? 'bg-yellow-500 animate-pulse' : botStatus === 'reiniciando' ? 'bg-blue-500 animate-pulse' : 'bg-red-500'}`} />
                 <span className="font-bold uppercase tracking-widest text-sm" style={{ color: 'var(--cor-texto-principal)' }}>
                   {botStatus === 'desconectado' && 'Offline / Desconectado'}
                   {botStatus === 'aguardando_qr' && 'Aguardando Leitura'}
                   {botStatus === 'conectado' && 'Online e Operante'}
+                  {botStatus === 'reiniciando' && 'Reiniciando...'}
                 </span>
               </div>
             </div>
 
             {botStatus === 'desconectado' && (
-              <div className="bg-red-900/10 border border-red-900/30 p-6 rounded-3xl">
-                 <p className="text-red-500 text-xs font-bold uppercase tracking-widest text-center">Inicie o servidor Node.js no terminal para conectar.</p>
+              <div className="bg-red-900/10 border border-red-900/30 p-6 rounded-3xl space-y-1">
+                 <p className="text-red-500 text-xs font-bold uppercase tracking-widest text-center">Servidor do bot não respondeu.</p>
+                 <p className="text-red-500/70 text-[10px] font-medium text-center">Se o Docker/terminal do bot estiver desligado, o botão abaixo não vai adiantar — precisa ligar o processo primeiro. Se ele estiver ligado mas travado, "Reiniciar" resolve.</p>
+              </div>
+            )}
+            {botStatus === 'reiniciando' && (
+              <div className="bg-blue-900/10 border border-blue-900/30 p-6 rounded-3xl flex items-center justify-center gap-3">
+                <Loader2 size={18} className="animate-spin text-blue-500" />
+                <p className="text-blue-500 text-xs font-bold uppercase tracking-widest text-center">Reiniciando o bot...</p>
               </div>
             )}
             {botStatus === 'conectado' && (
@@ -169,10 +233,22 @@ export default function GerenciadorBot() {
                 <Power size={20} /> Desconectar Bot
               </button>
             )}
+            {botStatus !== 'reiniciando' && (
+              <button onClick={reiniciarBot} disabled={reiniciandoBot}
+                className="w-full bg-blue-600/10 text-blue-500 border border-blue-600/30 font-black py-5 rounded-2xl uppercase tracking-[0.2em] flex items-center justify-center gap-3 hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50 disabled:pointer-events-none">
+                {reiniciandoBot ? <Loader2 size={20} className="animate-spin" /> : <RotateCw size={20} />}
+                {reiniciandoBot ? 'Reiniciando...' : 'Reiniciar Bot'}
+              </button>
+            )}
           </div>
 
           <div className="flex flex-col items-center justify-center border p-8 rounded-3xl min-h-[200px]" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
-            {botStatus === 'desconectado' ? (
+            {botStatus === 'reiniciando' ? (
+              <div className="text-center text-blue-500">
+                <RotateCw size={48} className="mx-auto mb-4 animate-spin" />
+                <p className="text-[10px] font-black uppercase tracking-widest">Reiniciando a sessão do WhatsApp...</p>
+              </div>
+            ) : botStatus === 'desconectado' ? (
               <div className="text-center opacity-30">
                 <QrCode size={64} className="mx-auto mb-4" style={{ color: 'var(--cor-texto-principal)' }} />
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--cor-texto-principal)' }}>Servidor Desligado</p>
@@ -247,6 +323,27 @@ export default function GerenciadorBot() {
                   ))}
                 </div>
               </div>
+
+              {/* Aviso por antecedência — mecanismo independente dos horários fixos acima:
+                  avisa CADA cliente contando pra trás a partir do horário do corte DELE. */}
+              <div className="pt-5 mt-2 border-t space-y-4" style={{ borderColor: 'var(--cor-borda)' }}>
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-xs font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Avisar com antecedência do horário do corte:</p>
+                  <button onClick={() => setConfig({...config, lembreteAntecedenciaAtivo: !config.lembreteAntecedenciaAtivo})} className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0" style={{ backgroundColor: config.lembreteAntecedenciaAtivo ? 'var(--cor-primaria)' : 'var(--cor-borda)' }}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.lembreteAntecedenciaAtivo ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+                <div className={`flex items-center gap-3 transition-all duration-300 ${!config.lembreteAntecedenciaAtivo ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
+                  <input type="number" min="1" value={config.lembreteAntecedenciaMinutos}
+                    onChange={(e) => setConfig({...config, lembreteAntecedenciaMinutos: Number(e.target.value)})}
+                    className="w-24 border p-3 rounded-xl text-sm font-black outline-none text-center transition-colors"
+                    style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-primaria)' }} />
+                  <span className="text-xs font-black uppercase" style={{ color: 'var(--cor-texto-principal)' }}>Minutos antes do corte</span>
+                </div>
+                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>
+                  Ex: 60 avisa 1h antes de CADA agendamento, seja qual for o horário dele — funciona junto (e além) dos horários fixos configurados acima.
+                </p>
+              </div>
             </div>
 
             <div className="space-y-6">
@@ -264,6 +361,11 @@ export default function GerenciadorBot() {
                   <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Confirmação</label>
                   <textarea value={config.msgConfirmacao} onChange={(e) => setConfig({...config, msgConfirmacao: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
                   <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Lista de Espera</label>
+                  <textarea value={config.msgListaEspera} onChange={(e) => setConfig({...config, msgListaEspera: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Enviada no modo "Bot" (Configurações → Lista de Espera) quando um horário vaga. Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
                 </div>
               </div>
             </div>
@@ -338,10 +440,35 @@ export default function GerenciadorBot() {
                 <button onClick={dispararCampanha} disabled={enviandoCampanha || !mensagemCampanha}
                   className="text-white px-6 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95"
                   style={{ backgroundColor: 'var(--cor-primaria)' }}>
-                  {enviandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} 
+                  {enviandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                   {enviandoCampanha ? 'Enviando...' : 'Disparar'}
                 </button>
               </div>
+
+              {/* Barra de progresso do disparo — consultada via polling em
+                  /api/bot/campanha/status enquanto o backend manda as mensagens. */}
+              {progressoCampanha && progressoCampanha.total > 0 && (
+                <div className="space-y-2 pt-2">
+                  <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>
+                    <span>{progressoCampanha.emAndamento ? 'Enviando...' : 'Último disparo concluído'}</span>
+                    <span style={{ color: 'var(--cor-primaria)' }}>{progressoCampanha.enviados + progressoCampanha.falhas} / {progressoCampanha.total}</span>
+                  </div>
+                  <div className="w-full h-3 rounded-full overflow-hidden border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${Math.min(100, Math.round(((progressoCampanha.enviados + progressoCampanha.falhas) / progressoCampanha.total) * 100))}%`,
+                        backgroundColor: 'var(--cor-primaria)'
+                      }}
+                    />
+                  </div>
+                  {progressoCampanha.falhas > 0 && (
+                    <p className="text-[9px] font-bold text-red-500">
+                      {progressoCampanha.falhas} cliente(s) não receberam (número inválido ou sem WhatsApp).
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
