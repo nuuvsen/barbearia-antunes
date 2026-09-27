@@ -4,6 +4,7 @@ import { collection, getDocs, addDoc, deleteDoc, doc, updateDoc, getDoc, setDoc,
 import Swal from 'sweetalert2'
 import toast from 'react-hot-toast'
 import { BOT_URL } from './botConfig'
+import { Tag, DollarSign, Scissors, CalendarDays, Users } from 'lucide-react'
 
 export default function AdminPlanos() {
   const [planos, setPlanos] = useState([])
@@ -37,6 +38,11 @@ export default function AdminPlanos() {
   const [novoCombo, setNovoCombo] = useState({ nome: '', tempo: '' })
   const [solicitacoes, setSolicitacoes] = useState([])
 
+  // Quantos clientes têm cada plano ativo no momento (dataLimite ainda não vencida, ou
+  // sem dataLimite registrada). Só pra mostrar nos cards — não afeta nenhuma lógica de
+  // negócio existente.
+  const [assinantesPorPlano, setAssinantesPorPlano] = useState({})
+
   const carregarDados = async () => {
     try {
       // 1. Busca a personalização primeiro para garantir as cores
@@ -49,13 +55,29 @@ export default function AdminPlanos() {
       }
 
       // 2. Busca o restante dos dados
-      const [snapPlanos, snapServicos] = await Promise.all([
+      const [snapPlanos, snapServicos, snapClientes] = await Promise.all([
         getDocs(collection(db, "planos")),
-        getDocs(collection(db, "servicos"))
+        getDocs(collection(db, "servicos")),
+        getDocs(collection(db, "clientes"))
       ]);
 
       setPlanos(snapPlanos.docs.map(d => ({ id: d.id, ...d.data() })))
       setServicosDisponiveis(snapServicos.docs.map(d => d.data().nome))
+
+      // dataLimite é sempre gravada em ISO ("AAAA-MM-DD", ver finalizarSolicitacao acima
+      // e o mesmo fluxo em AdminClientes.jsx), então dá pra comparar direto com `new Date()`.
+      const agora = new Date()
+      const mapaAssinantes = {}
+      snapClientes.docs.forEach(d => {
+        const c = d.data()
+        if (!c.planoId) return
+        if (c.dataLimite) {
+          const dl = new Date(c.dataLimite)
+          if (!isNaN(dl.getTime()) && dl < agora) return // plano venceu, não conta
+        }
+        mapaAssinantes[c.planoId] = (mapaAssinantes[c.planoId] || 0) + 1
+      })
+      setAssinantesPorPlano(mapaAssinantes)
     } catch (error) {
       console.error("Erro ao carregar dados:", error);
     } finally {
@@ -347,13 +369,20 @@ export default function AdminPlanos() {
               }}
             >
               <div className="flex-1">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <p className="font-black text-2xl uppercase tracking-tighter" style={{ color: cores.texto }}>{p.nome}</p>
-                  <span 
+                  <span
                     className="text-[10px] px-2 py-1 rounded-full font-black uppercase text-white"
                     style={{ backgroundColor: p.status === 'Ativo' ? '#16a34a' : cores.primaria }}
                   >
                     {p.status}
+                  </span>
+                  <span
+                    className="text-[10px] px-2 py-1 rounded-full font-black uppercase flex items-center gap-1"
+                    style={{ backgroundColor: hexToRgba(cores.borda, 0.08), color: cores.textoSecundario }}
+                    title="Clientes com esse plano ativo agora (dentro da validade)"
+                  >
+                    <Users size={11} /> {assinantesPorPlano[p.id] || 0} assinante{(assinantesPorPlano[p.id] || 0) === 1 ? '' : 's'}
                   </span>
                 </div>
                 <p className="text-sm font-bold mt-1" style={{ color: cores.primaria }}>
@@ -410,54 +439,79 @@ export default function AdminPlanos() {
           <h2 className="text-xl font-black mb-6 uppercase italic" style={{ color: cores.primaria }}>
             {form.id ? 'Editar Plano' : 'Criar Novo Plano'}
           </h2>
-          <form onSubmit={salvar} className="space-y-4">
-            <input 
-              value={form.nome} 
-              onChange={e => setForm({...form, nome: e.target.value})} 
-              placeholder="Nome do Plano" 
-              className="w-full border p-4 rounded-2xl outline-none transition-all"
-              style={{ 
-                backgroundColor: hexToRgba(cores.fundo, 0.3), 
-                borderColor: cores.borda, 
-                color: cores.texto 
-              }} 
-            />
-            
-            {/* BUG ENCONTRADO NO PASSEIO VISUAL: este formulário mora numa coluna estreita
-                (é 1 de 3 colunas do layout, e no mobile/telas médias essa coluna fica bem
-                menor ainda). Com "grid-cols-3" forçando os 3 campos lado a lado, cada input
-                sobrava menos de 100px — o placeholder "Validade (Dias)" e "Qtd Cortes"
-                ficavam cortados na borda do campo ("Valid...", "Qtd C..."). Empilhando em
-                1 coluna, cada campo usa a largura toda do formulário e o texto sempre cabe. */}
-            <div className="grid grid-cols-1 gap-4">
+          <form onSubmit={salvar} className="space-y-5">
+            <div>
+              <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1" style={{ color: cores.textoSecundario }}>
+                <Tag size={11} /> Nome do Plano
+              </label>
               <input
-                value={form.valor}
-                onChange={e => setForm({...form, valor: e.target.value})}
-                placeholder="Valor"
-                className="w-full border p-4 rounded-2xl outline-none"
-                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
+                value={form.nome}
+                onChange={e => setForm({...form, nome: e.target.value})}
+                placeholder="Ex: Plano Mensal"
+                className="w-full border p-4 rounded-2xl outline-none transition-all mt-1"
+                style={{
+                  backgroundColor: hexToRgba(cores.fundo, 0.3),
+                  borderColor: cores.borda,
+                  color: cores.texto
+                }}
               />
-              <input
-                value={form.cortes}
-                onChange={e => setForm({...form, cortes: e.target.value})}
-                placeholder="Qtd Cortes"
-                type="number"
-                className="w-full border p-4 rounded-2xl outline-none"
-                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
-              />
-              <input
-                value={form.validadeDias}
-                onChange={e => setForm({...form, validadeDias: e.target.value})}
-                placeholder="Validade (Dias)"
-                type="number"
-                className="w-full border p-4 rounded-2xl outline-none"
-                style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
-              />
+              <p className="text-[9px] font-bold opacity-50 mt-1 ml-2">Como o plano aparece pro cliente na vitrine e na ficha dele.</p>
+            </div>
+
+            {/* Cada campo empilhado em 1 coluna (não lado a lado): esse formulário mora numa
+                coluna estreita do layout (1 de 3), e com os campos em grid-cols-3 o texto do
+                placeholder/label ficava cortado na borda do input. */}
+            <div className="grid grid-cols-1 gap-5">
+              <div>
+                <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1" style={{ color: cores.textoSecundario }}>
+                  <DollarSign size={11} /> Valor Mensal (R$)
+                </label>
+                <input
+                  value={form.valor}
+                  onChange={e => setForm({...form, valor: e.target.value})}
+                  placeholder="Ex: 80"
+                  inputMode="decimal"
+                  className="w-full border p-4 rounded-2xl outline-none mt-1"
+                  style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
+                />
+                <p className="text-[9px] font-bold opacity-50 mt-1 ml-2">Quanto o cliente paga por mês nesse plano.</p>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1" style={{ color: cores.textoSecundario }}>
+                  <Scissors size={11} /> Cortes / Agendamentos Inclusos
+                </label>
+                <input
+                  value={form.cortes}
+                  onChange={e => setForm({...form, cortes: e.target.value})}
+                  placeholder="Ex: 4"
+                  type="number"
+                  className="w-full border p-4 rounded-2xl outline-none mt-1"
+                  style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
+                />
+                <p className="text-[9px] font-bold opacity-50 mt-1 ml-2">Quantos agendamentos o cliente pode usar dentro da validade. Aparece no card como "Limite de X agendamentos".</p>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase opacity-50 ml-2 flex items-center gap-1" style={{ color: cores.textoSecundario }}>
+                  <CalendarDays size={11} /> Validade (dias)
+                </label>
+                <input
+                  value={form.validadeDias}
+                  onChange={e => setForm({...form, validadeDias: e.target.value})}
+                  placeholder="Ex: 30"
+                  type="number"
+                  className="w-full border p-4 rounded-2xl outline-none mt-1"
+                  style={{ backgroundColor: hexToRgba(cores.fundo, 0.3), borderColor: cores.borda, color: cores.texto }}
+                />
+                <p className="text-[9px] font-bold opacity-50 mt-1 ml-2">Dias até o plano vencer e o cliente precisar renovar. Deixe em branco ou 0 pra um plano que não vence (só controla pelos cortes).</p>
+              </div>
             </div>
 
             {/* SELEÇÃO DE SERVIÇOS */}
             <div className="border p-4 rounded-2xl" style={{ backgroundColor: hexToRgba(cores.fundo, 0.2), borderColor: cores.borda }}>
-              <p className="text-[10px] uppercase font-black mb-3" style={{ color: cores.textoSecundario }}>Serviços Base Cobertos:</p>
+              <p className="text-[10px] uppercase font-black" style={{ color: cores.textoSecundario }}>Serviços Base Cobertos:</p>
+              <p className="text-[9px] font-bold opacity-50 mb-3">Marque quais serviços do cardápio já entram no plano sem cobrar de novo.</p>
               <div className="flex flex-col gap-2 max-h-32 overflow-y-auto pr-2 mb-2">
                 {servicosDisponiveis.map(s => (
                   <label key={s} className="flex items-center gap-3 cursor-pointer group">
@@ -481,27 +535,34 @@ export default function AdminPlanos() {
 
             {/* CRIAÇÃO DE COMBOS */}
             <div className="border p-4 rounded-2xl" style={{ backgroundColor: hexToRgba(cores.primaria, 0.05), borderColor: hexToRgba(cores.primaria, 0.2) }}>
-              <p className="text-[10px] uppercase font-black mb-3" style={{ color: cores.primaria }}>Combos Exclusivos:</p>
-              
-              <div className="flex gap-2 mb-3">
-                <input 
-                  value={novoCombo.nome} 
-                  onChange={e => setNovoCombo({...novoCombo, nome: e.target.value})} 
-                  placeholder="Nome do Combo" 
-                  className="w-full border p-3 rounded-xl outline-none text-xs"
-                  style={{ backgroundColor: cores.card, borderColor: cores.borda, color: cores.texto }} 
-                />
-                <input 
-                  value={novoCombo.tempo} 
-                  onChange={e => setNovoCombo({...novoCombo, tempo: e.target.value})} 
-                  placeholder="Min" 
-                  className="w-20 border p-3 rounded-xl outline-none text-xs"
-                  style={{ backgroundColor: cores.card, borderColor: cores.borda, color: cores.texto }} 
-                />
-                <button 
-                  type="button" 
-                  onClick={adicionarCombo} 
-                  className="text-white font-black px-4 rounded-xl hover:opacity-80"
+              <p className="text-[10px] uppercase font-black" style={{ color: cores.primaria }}>Combos Exclusivos:</p>
+              <p className="text-[9px] font-bold opacity-60 mb-3" style={{ color: cores.primaria }}>Extras exclusivos de assinante (ex: "Corte + Barba" com tempo reservado na agenda), fora do que já vem no plano.</p>
+
+              <div className="flex gap-2 mb-3 items-end">
+                <div className="flex-1">
+                  <label className="text-[8px] font-black uppercase opacity-60 ml-1" style={{ color: cores.primaria }}>Nome do Combo</label>
+                  <input
+                    value={novoCombo.nome}
+                    onChange={e => setNovoCombo({...novoCombo, nome: e.target.value})}
+                    placeholder="Ex: Corte + Barba"
+                    className="w-full border p-3 rounded-xl outline-none text-xs mt-1"
+                    style={{ backgroundColor: cores.card, borderColor: cores.borda, color: cores.texto }}
+                  />
+                </div>
+                <div className="w-20">
+                  <label className="text-[8px] font-black uppercase opacity-60 ml-1" style={{ color: cores.primaria }}>Min.</label>
+                  <input
+                    value={novoCombo.tempo}
+                    onChange={e => setNovoCombo({...novoCombo, tempo: e.target.value})}
+                    placeholder="30"
+                    className="w-full border p-3 rounded-xl outline-none text-xs mt-1"
+                    style={{ backgroundColor: cores.card, borderColor: cores.borda, color: cores.texto }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={adicionarCombo}
+                  className="text-white font-black px-4 py-3 rounded-xl hover:opacity-80"
                   style={{ backgroundColor: cores.primaria }}
                 >+</button>
               </div>
