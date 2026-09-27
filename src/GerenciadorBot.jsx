@@ -1,10 +1,23 @@
 import { useState, useEffect } from 'react'
-import { CheckCircle, Bot, QrCode, Power, RefreshCcw, RotateCw, Bell, Clock, MessageSquare, Plus, Trash2, Save, Loader2, Megaphone, Send, UserSearch, Star } from 'lucide-react'
+import { CheckCircle, Bot, QrCode, Power, RefreshCcw, RotateCw, Bell, Clock, MessageSquare, Plus, Trash2, Save, Loader2, Megaphone, Send, UserSearch, Star, X, Users, FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast' // <-- Adicionado o import do toast que estava faltando!
 import { db } from './firebase'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore'
 import { BOT_URL } from './botConfig'
 import Carregando from './Carregando'
+import CampoComVariaveis from './CampoComVariaveis'
+import { ehBloqueio } from './bloqueioUtils'
+
+// Variáveis disponíveis pro seletor "/" em cada campo de mensagem — cada mensagem só
+// oferece as que ela de fato consegue preencher (ex: a campanha não tem como saber o
+// {servico} de cada cliente, então nem aparece como opção nela).
+const VARIAVEIS = {
+  nome: { valor: '{nome}', nome: 'nome', descricao: 'Primeiro nome do cliente' },
+  servico: { valor: '{servico}', nome: 'servico', descricao: 'Serviço agendado' },
+  data: { valor: '{data}', nome: 'data', descricao: 'Data do agendamento' },
+  hora: { valor: '{hora}', nome: 'hora', descricao: 'Horário do agendamento' },
+  barbeiro: { valor: '{barbeiro}', nome: 'barbeiro', descricao: 'Nome do profissional' },
+}
 
 export default function GerenciadorBot() {
   const [botStatus, setBotStatus] = useState('desconectado')
@@ -16,7 +29,22 @@ export default function GerenciadorBot() {
 
   const [mensagemCampanha, setMensagemCampanha] = useState('')
   const [enviandoCampanha, setEnviandoCampanha] = useState(false)
-  const [progressoCampanha, setProgressoCampanha] = useState(null) // { emAndamento, total, enviados, falhas }
+  const [cancelandoCampanha, setCancelandoCampanha] = useState(false)
+  const [progressoCampanha, setProgressoCampanha] = useState(null) // { emAndamento, total, enviados, falhas, cancelada }
+
+  // 🎯 Segmentação de campanha — mesmo critério usado na tela de Clientes: "cortes" e
+  // "cliente desde" são calculados a partir dos agendamentos reais (exclui cancelados e
+  // bloqueios de agenda), não são um campo fixo salvo em algum lugar.
+  const [segmentoTipo, setSegmentoTipo] = useState('todos') // 'todos' | 'antigos' | 'cortes' | 'plano'
+  const [segmentoDias, setSegmentoDias] = useState(90)
+  const [segmentoCortesMin, setSegmentoCortesMin] = useState(3)
+  const [segmentoPlanoId, setSegmentoPlanoId] = useState('')
+  const [planosDisponiveis, setPlanosDisponiveis] = useState([])
+  const [previaSegmento, setPreviaSegmento] = useState(null) // quantos clientes batem com o filtro atual
+  const [calculandoPrevia, setCalculandoPrevia] = useState(false)
+
+  const [numeroTeste, setNumeroTeste] = useState('')
+  const [enviandoTeste, setEnviandoTeste] = useState(false)
 
   // ESTADO ATUALIZADO COM TODAS AS CONFIGURAÇÕES (Lembretes, Radar e NPS)
   const [config, setConfig] = useState({
@@ -105,6 +133,87 @@ export default function GerenciadorBot() {
     return () => clearInterval(intervalo)
   }, [enviandoCampanha])
 
+  // Carrega os planos ativos uma vez, pra popular o filtro "por assinatura".
+  useEffect(() => {
+    const carregarPlanos = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'planos'))
+        setPlanosDisponiveis(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.status === 'Ativo'))
+      } catch (e) {
+        console.error('Erro ao carregar planos:', e)
+      }
+    }
+    carregarPlanos()
+  }, [])
+
+  // 🎯 Monta a lista de clientes que batem com o filtro de segmentação escolhido. Mesma
+  // lógica de agregação usada em AdminClientes.jsx (totalAtendimentos e primeiraVisita
+  // vêm de contar os agendamentos reais de cada telefone, não de um campo salvo) — se
+  // aquela tela mudar esse critério um dia, esta função precisa ser atualizada junto.
+  const montarListaSegmentada = async () => {
+    const snapClientes = await getDocs(collection(db, 'clientes'))
+    const mapaClientes = {}
+    snapClientes.docs.forEach(d => { mapaClientes[d.id] = d.data() })
+
+    const snapAgendamentos = await getDocs(collection(db, 'agendamentos'))
+    const agendamentosReais = snapAgendamentos.docs.filter(d => !ehBloqueio(d.data()) && d.data().status !== 'Cancelado')
+    const stats = {}
+    agendamentosReais.forEach(d => {
+      const tel = d.data().clienteTelefone
+      const dataVisita = d.data().data
+      if (!tel) return
+      if (!stats[tel]) stats[tel] = { total: 0, primeiraVisita: dataVisita, nome: d.data().clienteNome }
+      stats[tel].total += 1
+      if (dataVisita && dataVisita < stats[tel].primeiraVisita) stats[tel].primeiraVisita = dataVisita
+    })
+
+    // União dos telefones cadastrados em "clientes" com os que só têm agendamento (ex:
+    // cliente antigo que nunca preencheu o próprio cadastro formal).
+    const telefones = new Set([...Object.keys(mapaClientes), ...Object.keys(stats)])
+    let lista = Array.from(telefones).map(tel => ({
+      telefone: tel,
+      nome: mapaClientes[tel]?.nome || stats[tel]?.nome || 'Cliente',
+      totalAtendimentos: stats[tel]?.total || 0,
+      primeiraVisita: stats[tel]?.primeiraVisita || null,
+      planoId: mapaClientes[tel]?.planoId || ''
+    })).filter(c => c.telefone && c.telefone !== '00000000000')
+
+    const hoje = new Date().toISOString().split('T')[0]
+    const diasEntre = (dataIso) => {
+      if (!dataIso) return Infinity
+      const diffMs = new Date(hoje) - new Date(dataIso)
+      return Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    }
+
+    if (segmentoTipo === 'antigos') {
+      lista = lista.filter(c => diasEntre(c.primeiraVisita) >= segmentoDias)
+    } else if (segmentoTipo === 'cortes') {
+      lista = lista.filter(c => c.totalAtendimentos >= segmentoCortesMin)
+    } else if (segmentoTipo === 'plano') {
+      lista = lista.filter(c => segmentoPlanoId ? c.planoId === segmentoPlanoId : !!c.planoId)
+    }
+
+    return lista
+  }
+
+  // Recalcula o "prévia: N clientes" toda vez que o filtro muda, pra dar confiança antes
+  // de disparar de verdade (com um pequeno debounce pra não bater no Firestore a cada
+  // tecla digitada nos campos de dias/cortes).
+  useEffect(() => {
+    setCalculandoPrevia(true)
+    const timeout = setTimeout(async () => {
+      try {
+        const lista = await montarListaSegmentada()
+        setPreviaSegmento(lista.length)
+      } catch (e) {
+        console.error('Erro ao calcular prévia da segmentação:', e)
+        setPreviaSegmento(null)
+      }
+      setCalculandoPrevia(false)
+    }, 500)
+    return () => clearTimeout(timeout)
+  }, [segmentoTipo, segmentoDias, segmentoCortesMin, segmentoPlanoId])
+
   const reiniciarBot = async () => {
     setReiniciandoBot(true)
     try {
@@ -147,21 +256,49 @@ export default function GerenciadorBot() {
     setSalvando(false)
   }
 
+  const rotuloSegmento = () => {
+    if (segmentoTipo === 'antigos') return `clientes há ${segmentoDias}+ dias`
+    if (segmentoTipo === 'cortes') return `clientes com ${segmentoCortesMin}+ cortes`
+    if (segmentoTipo === 'plano') {
+      const plano = planosDisponiveis.find(p => p.id === segmentoPlanoId)
+      return plano ? `assinantes do plano "${plano.nome}"` : 'clientes com qualquer plano ativo'
+    }
+    return 'TODOS os seus clientes cadastrados'
+  }
+
   const dispararCampanha = async () => {
     if (!mensagemCampanha.trim()) return toast("Digite uma mensagem para a campanha.")
     if (botStatus !== 'conectado') return toast("O bot precisa estar conectado para enviar mensagens.")
-    
-    const confirmar = window.confirm("⚠️ ATENÇÃO: Esta mensagem será enviada para TODOS os seus clientes cadastrados. Tem certeza que deseja iniciar o disparo?")
-    if (!confirmar) return
 
     setEnviandoCampanha(true)
+    let listaSegmentada
+    try {
+      listaSegmentada = await montarListaSegmentada()
+    } catch (e) {
+      toast.error("Erro ao buscar os clientes desse filtro.")
+      setEnviandoCampanha(false)
+      return
+    }
+
+    if (listaSegmentada.length === 0) {
+      toast.error("Nenhum cliente encontrado com esse filtro.")
+      setEnviandoCampanha(false)
+      return
+    }
+
+    const confirmar = window.confirm(`⚠️ ATENÇÃO: Esta mensagem será enviada para ${listaSegmentada.length} ${rotuloSegmento()}. Tem certeza que deseja iniciar o disparo?`)
+    if (!confirmar) {
+      setEnviandoCampanha(false)
+      return
+    }
+
     try {
       const res = await fetch(`${BOT_URL}/api/bot/campanha`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mensagem: mensagemCampanha })
+        body: JSON.stringify({ mensagem: mensagemCampanha, clientes: listaSegmentada })
       })
-      
+
       const data = await res.json()
 
       if (data.success) {
@@ -176,6 +313,46 @@ export default function GerenciadorBot() {
       toast.error("Erro ao se comunicar com o servidor do bot.")
     }
     setEnviandoCampanha(false)
+  }
+
+  const cancelarCampanha = async () => {
+    setCancelandoCampanha(true)
+    try {
+      const res = await fetch(`${BOT_URL}/api/bot/campanha/cancelar`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        toast.success("Cancelamento solicitado — o disparo vai parar em instantes.")
+      } else {
+        toast.error(data.error || "Não consegui cancelar o disparo.")
+      }
+    } catch (e) {
+      toast.error("Erro ao se comunicar com o servidor do bot.")
+    }
+    setCancelandoCampanha(false)
+  }
+
+  const enviarTeste = async () => {
+    if (!mensagemCampanha.trim()) return toast("Digite uma mensagem antes de testar.")
+    if (!numeroTeste.trim()) return toast("Informe o seu número de WhatsApp pra receber o teste.")
+    if (botStatus !== 'conectado') return toast("O bot precisa estar conectado para enviar mensagens.")
+
+    setEnviandoTeste(true)
+    try {
+      const res = await fetch(`${BOT_URL}/api/bot/campanha/teste`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mensagem: mensagemCampanha, numeroTeste })
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast.success("🧪 Mensagem de teste enviada!")
+      } else {
+        toast.error(data.error || "Erro ao enviar o teste.")
+      }
+    } catch (e) {
+      toast.error("Erro ao se comunicar com o servidor do bot.")
+    }
+    setEnviandoTeste(false)
   }
 
   if (carregandoConfig) return <Carregando tela={false} label="Carregando..." />;
@@ -354,18 +531,18 @@ export default function GerenciadorBot() {
               <div className="space-y-5">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Lembrete</label>
-                  <textarea value={config.msgLembrete} onChange={(e) => setConfig({...config, msgLembrete: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span></p>
+                  <CampoComVariaveis value={config.msgLembrete} onChange={(v) => setConfig({...config, msgLembrete: v})} variaveis={[VARIAVEIS.nome, VARIAVEIS.hora]} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Digite <span style={{ color: 'var(--cor-primaria)' }}>/</span> pra escolher uma variável, ou use: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span></p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Confirmação</label>
-                  <textarea value={config.msgConfirmacao} onChange={(e) => setConfig({...config, msgConfirmacao: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
+                  <CampoComVariaveis value={config.msgConfirmacao} onChange={(v) => setConfig({...config, msgConfirmacao: v})} variaveis={[VARIAVEIS.nome, VARIAVEIS.servico, VARIAVEIS.data, VARIAVEIS.hora, VARIAVEIS.barbeiro]} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Digite <span style={{ color: 'var(--cor-primaria)' }}>/</span> pra escolher uma variável, ou use: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Lista de Espera</label>
-                  <textarea value={config.msgListaEspera} onChange={(e) => setConfig({...config, msgListaEspera: e.target.value})} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Enviada no modo "Bot" (Configurações → Lista de Espera) quando um horário vaga. Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
+                  <CampoComVariaveis value={config.msgListaEspera} onChange={(v) => setConfig({...config, msgListaEspera: v})} variaveis={[VARIAVEIS.nome, VARIAVEIS.servico, VARIAVEIS.data, VARIAVEIS.hora, VARIAVEIS.barbeiro]} className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-32 resize-none transition-colors" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                  <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Enviada no modo "Bot" (Configurações → Lista de Espera) quando um horário vaga. Digite <span style={{ color: 'var(--cor-primaria)' }}>/</span> pra escolher uma variável, ou use: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{servico}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{data}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{hora}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
                 </div>
               </div>
             </div>
@@ -405,10 +582,10 @@ export default function GerenciadorBot() {
 
               <div className="space-y-2 mt-2 flex-1">
                 <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Resgate</label>
-                <textarea value={config.msgRadar} onChange={(e) => setConfig({...config, msgRadar: e.target.value})}
-                  className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors" 
+                <CampoComVariaveis value={config.msgRadar} onChange={(v) => setConfig({...config, msgRadar: v})} variaveis={[VARIAVEIS.nome]}
+                  className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-24 resize-none transition-colors"
                   style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
-                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span></p>
+                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Digite <span style={{ color: 'var(--cor-primaria)' }}>/</span> pra escolher uma variável, ou use: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span></p>
               </div>
             </div>
           </div>
@@ -426,23 +603,97 @@ export default function GerenciadorBot() {
             </div>
 
             <div className="space-y-4 flex-1 flex flex-col">
-              <textarea 
-                value={mensagemCampanha} 
-                onChange={(e) => setMensagemCampanha(e.target.value)}
+              <CampoComVariaveis
+                value={mensagemCampanha}
+                onChange={setMensagemCampanha}
+                variaveis={[VARIAVEIS.nome]}
                 placeholder="Ex: Fala {nome}! Só hoje na barbearia, qualquer corte tem 20% OFF."
                 className="w-full border p-4 rounded-xl text-xs font-medium outline-none flex-1 min-h-[100px] resize-none transition-colors"
                 style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}
               />
-              <div className="flex items-center justify-between gap-4 mt-auto">
-                <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>
-                  Var: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>
+              <p className="text-[9px] font-bold -mt-2" style={{ color: 'var(--cor-texto-secundario)' }}>
+                Digite <span style={{ color: 'var(--cor-primaria)' }}>/</span> pra escolher uma variável, ou use: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>
+              </p>
+
+              {/* 🎯 Segmentação — escolhe QUEM recebe, em vez de sempre disparar pra
+                  todo mundo. O cálculo de "cortes" e "cliente desde" é feito na hora,
+                  a partir dos agendamentos reais (mesmo critério da tela Clientes). */}
+              <div className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--cor-borda)' }}>
+                <div className="flex items-center gap-2 pt-2">
+                  <Users size={14} style={{ color: 'var(--cor-primaria)' }} />
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Público-alvo</label>
+                </div>
+                <select value={segmentoTipo} onChange={(e) => setSegmentoTipo(e.target.value)}
+                  className="w-full border p-3 rounded-xl text-xs font-bold outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}>
+                  <option value="todos">Todos os clientes cadastrados</option>
+                  <option value="antigos">Clientes há X dias (antiguidade)</option>
+                  <option value="cortes">Clientes com X+ cortes</option>
+                  <option value="plano">Clientes por assinatura/plano</option>
+                </select>
+
+                {segmentoTipo === 'antigos' && (
+                  <div className="flex items-center gap-3 pt-1">
+                    <input type="number" min="1" value={segmentoDias} onChange={(e) => setSegmentoDias(Number(e.target.value))}
+                      className="w-20 border p-2 rounded-xl text-sm font-black outline-none text-center transition-colors"
+                      style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-primaria)' }} />
+                    <span className="text-[10px] font-black uppercase" style={{ color: 'var(--cor-texto-principal)' }}>dias ou mais, desde o 1º corte</span>
+                  </div>
+                )}
+                {segmentoTipo === 'cortes' && (
+                  <div className="flex items-center gap-3 pt-1">
+                    <input type="number" min="1" value={segmentoCortesMin} onChange={(e) => setSegmentoCortesMin(Number(e.target.value))}
+                      className="w-20 border p-2 rounded-xl text-sm font-black outline-none text-center transition-colors"
+                      style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-primaria)' }} />
+                    <span className="text-[10px] font-black uppercase" style={{ color: 'var(--cor-texto-principal)' }}>cortes ou mais (concluídos)</span>
+                  </div>
+                )}
+                {segmentoTipo === 'plano' && (
+                  <select value={segmentoPlanoId} onChange={(e) => setSegmentoPlanoId(e.target.value)}
+                    className="w-full border p-3 rounded-xl text-xs font-bold outline-none transition-colors"
+                    style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}>
+                    <option value="">Qualquer plano ativo</option>
+                    {planosDisponiveis.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                )}
+
+                <p className="text-[9px] font-bold pt-1" style={{ color: 'var(--cor-texto-secundario)' }}>
+                  {calculandoPrevia ? 'Calculando...' : previaSegmento === null ? '' : (
+                    <>Prévia: <span style={{ color: 'var(--cor-primaria)' }}>{previaSegmento}</span> cliente(s) vão receber</>
+                  )}
                 </p>
-                <button onClick={dispararCampanha} disabled={enviandoCampanha || !mensagemCampanha}
-                  className="text-white px-6 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95"
-                  style={{ backgroundColor: 'var(--cor-primaria)' }}>
-                  {enviandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  {enviandoCampanha ? 'Enviando...' : 'Disparar'}
+              </div>
+
+              {/* 🧪 Teste — manda só pra um número (o seu, por exemplo) antes de
+                  disparar de verdade, pra revisar o texto formatado na prática. */}
+              <div className="flex gap-2 pt-1">
+                <input type="tel" value={numeroTeste} onChange={(e) => setNumeroTeste(e.target.value)}
+                  placeholder="Seu WhatsApp (DDD + número)"
+                  className="flex-1 border p-3 rounded-xl text-xs font-bold outline-none transition-colors"
+                  style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }} />
+                <button onClick={enviarTeste} disabled={enviandoTeste || !mensagemCampanha || !numeroTeste}
+                  className="px-4 py-2 rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 border transition-all disabled:opacity-50 hover:brightness-95 active:scale-95 whitespace-nowrap"
+                  style={{ borderColor: 'var(--cor-primaria)', color: 'var(--cor-primaria)' }}>
+                  {enviandoTeste ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
+                  Testar
                 </button>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 mt-auto pt-2">
+                {progressoCampanha?.emAndamento ? (
+                  <button onClick={cancelarCampanha} disabled={cancelandoCampanha}
+                    className="text-red-500 px-6 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 border border-red-500/30 hover:bg-red-600 hover:text-white active:scale-95">
+                    {cancelandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <X size={16} />}
+                    {cancelandoCampanha ? 'Cancelando...' : 'Cancelar Disparo'}
+                  </button>
+                ) : (
+                  <button onClick={dispararCampanha} disabled={enviandoCampanha || !mensagemCampanha}
+                    className="text-white px-6 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50 hover:brightness-110 active:scale-95"
+                    style={{ backgroundColor: 'var(--cor-primaria)' }}>
+                    {enviandoCampanha ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    {enviandoCampanha ? 'Enviando...' : 'Disparar'}
+                  </button>
+                )}
               </div>
 
               {/* Barra de progresso do disparo — consultada via polling em
@@ -450,7 +701,7 @@ export default function GerenciadorBot() {
               {progressoCampanha && progressoCampanha.total > 0 && (
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>
-                    <span>{progressoCampanha.emAndamento ? 'Enviando...' : 'Último disparo concluído'}</span>
+                    <span>{progressoCampanha.emAndamento ? 'Enviando...' : progressoCampanha.cancelada ? 'Cancelado pelo usuário' : 'Último disparo concluído'}</span>
                     <span style={{ color: 'var(--cor-primaria)' }}>{progressoCampanha.enviados + progressoCampanha.falhas} / {progressoCampanha.total}</span>
                   </div>
                   <div className="w-full h-3 rounded-full overflow-hidden border" style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)' }}>
@@ -458,7 +709,7 @@ export default function GerenciadorBot() {
                       className="h-full rounded-full transition-all duration-500"
                       style={{
                         width: `${Math.min(100, Math.round(((progressoCampanha.enviados + progressoCampanha.falhas) / progressoCampanha.total) * 100))}%`,
-                        backgroundColor: 'var(--cor-primaria)'
+                        backgroundColor: progressoCampanha.cancelada ? '#ef4444' : 'var(--cor-primaria)'
                       }}
                     />
                   </div>
@@ -514,13 +765,14 @@ export default function GerenciadorBot() {
 
             <div className="space-y-2 md:col-span-2 xl:col-span-3">
               <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>Mensagem de Avaliação</label>
-              <textarea 
-                value={config.msgNPS} 
-                onChange={(e) => setConfig({...config, msgNPS: e.target.value})}
-                className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-28 resize-none transition-colors" 
+              <CampoComVariaveis
+                value={config.msgNPS}
+                onChange={(v) => setConfig({...config, msgNPS: v})}
+                variaveis={[VARIAVEIS.nome, VARIAVEIS.barbeiro]}
+                className="w-full border p-4 rounded-xl text-xs font-medium outline-none h-28 resize-none transition-colors"
                 style={{ backgroundColor: 'var(--cor-bg-geral)', borderColor: 'var(--cor-borda)', color: 'var(--cor-texto-principal)' }}
               />
-              <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Variáveis: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
+              <p className="text-[9px] font-bold" style={{ color: 'var(--cor-texto-secundario)' }}>Digite <span style={{ color: 'var(--cor-primaria)' }}>/</span> pra escolher uma variável, ou use: <span style={{ color: 'var(--cor-primaria)' }}>{'{nome}'}</span>, <span style={{ color: 'var(--cor-primaria)' }}>{'{barbeiro}'}</span></p>
             </div>
           </div>
         </div>
