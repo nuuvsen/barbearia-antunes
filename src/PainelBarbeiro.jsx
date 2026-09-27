@@ -1,13 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db } from './firebase'; 
+import { auth, db } from './firebase';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs, onSnapshot, doc, updateDoc, getDoc, increment } from 'firebase/firestore';
-import { CalendarDays, Bell } from 'lucide-react';
+import { CalendarDays, Bell, Wallet, Scissors, TrendingUp, X } from 'lucide-react';
 import { ativarNotificacoes } from './firebaseMessaging';
 import Swal from 'sweetalert2';
 import toast from 'react-hot-toast';
 import { ehBloqueio, abrirModalDeBloqueio, criarBloqueios, removerBloqueio, liberarHorario } from './bloqueioUtils';
 import Carregando from './Carregando';
+import AvisoConexao from './AvisoConexao';
+
+// Converte "DD/MM/AAAA" ou "AAAA-MM-DD" (os dois formatos de data usados pelo projeto,
+// dependendo de onde o registro foi criado) num objeto Date de verdade. Mesmo helper usado
+// em AdminGerencia.jsx — duplicado aqui de propósito (convenção já adotada no projeto:
+// cada arquivo tem sua própria cópia pequena em vez de um utilitário central).
+const normalizarData = (str) => {
+  if (!str) return null;
+  if (str.includes('-')) {
+    const [ano, mes, dia] = str.split('-');
+    if (!ano || !mes || !dia) return null;
+    return { dia, mes, ano };
+  }
+  if (str.includes('/')) {
+    const [dia, mes, ano] = str.split('/');
+    if (!ano || !mes || !dia) return null;
+    return { dia, mes, ano };
+  }
+  return null;
+};
+
+const dataParaObjeto = (str) => {
+  const n = normalizarData(str);
+  if (!n) return null;
+  const d = new Date(Number(n.ano), Number(n.mes) - 1, Number(n.dia));
+  return isNaN(d.getTime()) ? null : d;
+};
 
 const IconWhatsApp = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
 
@@ -26,6 +53,10 @@ export default function PainelBarbeiro() {
   const [configAgenda, setConfigAgenda] = useState(null);
   const [dataSelecionada, setDataSelecionada] = useState(new Date());
 
+  // Estados do painel "Meu Desempenho" (cortes feitos e comissão ganha hoje/semana/mês)
+  const [comandasBarbeiro, setComandasBarbeiro] = useState([]);
+  const [mostrarDesempenho, setMostrarDesempenho] = useState(false);
+
   // 1. CARREGAR CORES E CONFIGURAÇÃO DA AGENDA (Global)
   useEffect(() => {
     const qCores = query(collection(db, "configuracoes"));
@@ -38,10 +69,17 @@ export default function PainelBarbeiro() {
     });
 
     const getAgenda = async () => {
-      const docRef = doc(db, "configuracoes", "agenda");
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setConfigAgenda(docSnap.data());
+      try {
+        const docRef = doc(db, "configuracoes", "agenda");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setConfigAgenda(docSnap.data());
+        }
+      } catch (error) {
+        // Sem isso, uma falha de conexão aqui (comum no celular, sinal fraco) derrubava a
+        // Promise sem ninguém tratar — o AvisoConexao já avisa o barbeiro que está sem
+        // conexão com o servidor, então só logamos pra não travar em erro não tratado.
+        console.error("Erro ao carregar configuração da agenda:", error);
       }
     };
     getAgenda();
@@ -84,15 +122,74 @@ export default function PainelBarbeiro() {
     );
 
     const unsubAgendamentos = onSnapshot(qAgendamentos, (snapshot) => {
-      const lista = snapshot.docs.map(docSnap => ({ 
-        id: docSnap.id, 
-        ...docSnap.data() 
+      const lista = snapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
       }));
       setAgendamentos(lista);
     });
 
-    return () => unsubAgendamentos();
+    // Vendas de balcão (comandas) feitas por este barbeiro — usado no painel "Meu
+    // Desempenho" junto com os agendamentos concluídos. Sem isso, um corte fechado pela
+    // comanda (venda de balcão, sem passar pela agenda online) nunca apareceria nas
+    // estatísticas de cortes/comissão do próprio barbeiro.
+    const qComandas = query(
+      collection(db, "comandas"),
+      where("barbeiro", "==", barbeiroPerfil.nome)
+    );
+    const unsubComandas = onSnapshot(qComandas, (snapshot) => {
+      const lista = snapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      setComandasBarbeiro(lista);
+    });
+
+    return () => { unsubAgendamentos(); unsubComandas(); };
   }, [barbeiroPerfil]);
+
+  // =========================================================================
+  // "MEU DESEMPENHO" — cortes feitos e comissão ganha hoje / esta semana / este mês
+  // =========================================================================
+  // Une agendamentos concluídos (valorGerado/comissaoBarbeiro) com comandas concluídas
+  // (valorTotal/comissaoBarbeiro) — mesmo merge que AdminComissoes.jsx já faz — e agrupa
+  // por período usando a DATA do atendimento (não a "mesReferencia", que só tem granularidade
+  // de mês). Assume que o atendimento é concluído no mesmo dia do agendamento/comanda, o que
+  // é o caso normal numa barbearia (o corte é finalizado na hora, não dias depois).
+  const calcularDesempenho = () => {
+    const agora = new Date();
+    const inicioHoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+    const inicioSemana = new Date(inicioHoje);
+    inicioSemana.setDate(inicioHoje.getDate() - inicioHoje.getDay()); // domingo desta semana
+
+    const vazio = () => ({ cortes: 0, comissao: 0, valorGerado: 0 });
+    const totais = { hoje: vazio(), semana: vazio(), mes: vazio() };
+
+    const somar = (dataAtendimento, comissao, valorGerado) => {
+      const dataObj = dataParaObjeto(dataAtendimento);
+      if (!dataObj) return;
+
+      const somarEm = (chave) => {
+        totais[chave].cortes += 1;
+        totais[chave].comissao += comissao;
+        totais[chave].valorGerado += valorGerado;
+      };
+
+      if (dataObj >= inicioHoje) somarEm('hoje');
+      if (dataObj >= inicioSemana) somarEm('semana');
+      if (dataObj.getFullYear() === agora.getFullYear() && dataObj.getMonth() === agora.getMonth()) somarEm('mes');
+    };
+
+    agendamentos
+      .filter(ag => ag.status === 'Concluído')
+      .forEach(ag => somar(ag.data, Number(ag.comissaoBarbeiro || 0), Number(ag.valorGerado || 0)));
+
+    comandasBarbeiro
+      .filter(c => c.status === 'Concluído')
+      .forEach(c => somar(c.data, Number(c.comissaoBarbeiro || 0), Number(c.valorTotal || 0)));
+
+    return totais;
+  };
 
   // =========================================================================
   // FUNÇÕES DE AÇÃO 
@@ -313,6 +410,7 @@ export default function PainelBarbeiro() {
   if (carregando) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: configCores?.fundo || '#000000' }}>
+        <AvisoConexao />
         <Carregando label="Carregando painel..." />
       </div>
     );
@@ -322,6 +420,7 @@ export default function PainelBarbeiro() {
   if (!logado) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff' }}>
+        <AvisoConexao />
         <form onSubmit={gerirLogin} className="p-8 rounded-lg shadow-lg w-96 border" style={{ backgroundColor: configCores?.card || '#18181b', borderColor: configCores?.borda || '#27272a' }}>
           <h2 className="text-2xl font-black mb-6 text-center italic tracking-tighter" style={{ color: configCores?.primaria || '#dc2626' }}>
             ACESSO BARBEIRO
@@ -367,14 +466,23 @@ export default function PainelBarbeiro() {
   // --- TELA 2: AGENDA DO BARBEIRO ---
   return (
     <div className="min-h-screen p-4 md:p-6" style={{ backgroundColor: configCores?.fundo || '#f4f4f5' }}>
-      
+      <AvisoConexao />
+
       <header className="flex justify-between items-center p-4 rounded-xl shadow mb-6 border-b-4"
               style={{ backgroundColor: configCores?.card || '#ffffff', borderColor: configCores?.primaria || '#dc2626' }}>
         <h1 className="text-lg md:text-2xl font-black italic tracking-tighter" style={{ color: configCores?.texto || '#000000' }}>
           ANTUNES.OS | <span style={{ color: configCores?.primaria || '#dc2626' }}>Minha Agenda</span>
         </h1>
         <div className="flex items-center gap-2">
-          <button 
+          <button
+            onClick={() => setMostrarDesempenho(true)}
+            title="Meu Desempenho"
+            className="p-2.5 rounded-lg transition border shadow-sm hover:brightness-125"
+            style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff', borderColor: configCores?.borda || 'transparent' }}
+          >
+            <Wallet size={16} />
+          </button>
+          <button
             onClick={clicarAtivarNotificacoes}
             title="Ativar Notificações"
             className="p-2.5 rounded-lg transition border shadow-sm hover:brightness-125"
@@ -382,7 +490,7 @@ export default function PainelBarbeiro() {
           >
             <Bell size={16} />
           </button>
-          <button 
+          <button
             onClick={fazerLogout}
             className="font-bold py-2 px-6 rounded-lg transition uppercase tracking-widest text-xs hover:brightness-125 border shadow-sm"
             style={{ backgroundColor: configCores?.fundo || '#000000', color: configCores?.texto || '#ffffff', borderColor: configCores?.borda || 'transparent' }}
@@ -391,6 +499,14 @@ export default function PainelBarbeiro() {
           </button>
         </div>
       </header>
+
+      {mostrarDesempenho && (
+        <PainelDesempenho
+          totais={calcularDesempenho()}
+          configCores={configCores}
+          onClose={() => setMostrarDesempenho(false)}
+        />
+      )}
 
       <main className="mx-auto max-w-4xl space-y-6">
         
@@ -531,6 +647,80 @@ export default function PainelBarbeiro() {
         </div>
 
       </main>
+    </div>
+  );
+}
+
+// =========================================================================
+// PAINEL "MEU DESEMPENHO" — modal com cortes feitos e comissão ganha
+// hoje / esta semana / este mês (ver calcularDesempenho() acima).
+// =========================================================================
+function PainelDesempenho({ totais, configCores, onClose }) {
+  const formatarMoeda = (valor) => `R$ ${Number(valor || 0).toFixed(2).replace('.', ',')}`;
+
+  const periodos = [
+    { chave: 'hoje', titulo: 'Hoje' },
+    { chave: 'semana', titulo: 'Esta Semana' },
+    { chave: 'mes', titulo: 'Este Mês' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-lg rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border"
+           style={{ backgroundColor: configCores?.card || '#ffffff', borderColor: configCores?.borda || '#eeeeee' }}>
+
+        <div className="p-6 flex justify-between items-center border-b" style={{ borderColor: configCores?.borda || '#eeeeee' }}>
+          <div>
+            <h1 className="text-xl font-black uppercase italic flex items-center gap-2" style={{ color: configCores?.texto || '#000' }}>
+              <Wallet size={20} style={{ color: configCores?.primaria || '#dc2626' }} /> Meu Desempenho
+            </h1>
+            <p className="text-xs font-bold opacity-50 mt-1" style={{ color: configCores?.textoSecundario || '#666' }}>
+              Cortes feitos e comissão ganha
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-full transition-colors hover:brightness-125"
+                  style={{ backgroundColor: configCores?.fundo || '#f4f4f5', color: configCores?.texto || '#000' }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-4">
+          {periodos.map(({ chave, titulo }) => {
+            const dados = totais[chave];
+            return (
+              <div key={chave} className="p-5 rounded-[1.5rem] border shadow-sm"
+                   style={{ backgroundColor: configCores?.fundo || '#f9fafb', borderColor: configCores?.borda || '#eeeeee' }}>
+                <p className="text-[10px] font-black uppercase tracking-widest opacity-50 mb-3" style={{ color: configCores?.textoSecundario }}>
+                  {titulo}
+                </p>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <Scissors size={18} className="opacity-40" style={{ color: configCores?.texto || '#000' }} />
+                    <div>
+                      <p className="text-2xl font-black leading-none" style={{ color: configCores?.texto || '#000' }}>{dados.cortes}</p>
+                      <p className="text-[9px] font-bold uppercase opacity-50" style={{ color: configCores?.textoSecundario }}>
+                        {dados.cortes === 1 ? 'corte' : 'cortes'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-right">
+                    <div>
+                      <p className="text-2xl font-black leading-none text-green-600">{formatarMoeda(dados.comissao)}</p>
+                      <p className="text-[9px] font-bold uppercase opacity-50" style={{ color: configCores?.textoSecundario }}>comissão</p>
+                    </div>
+                    <TrendingUp size={18} className="text-green-600/50" />
+                  </div>
+                </div>
+
+                <p className="text-[10px] font-bold uppercase opacity-40 mt-3 pt-3 border-t" style={{ borderColor: configCores?.borda || '#eeeeee', color: configCores?.textoSecundario }}>
+                  Gerou {formatarMoeda(dados.valorGerado)} pra barbearia neste período
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

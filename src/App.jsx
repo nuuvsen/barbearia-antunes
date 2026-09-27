@@ -4,7 +4,6 @@ import { db } from './firebase'
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore'
 import { Toaster } from 'react-hot-toast';
 import BotMonitor from './BotMonitor';
-import ConnectionBanner from './ConnectionBanner';
 
 // Importação dos componentes
 import Cliente from './Cliente'
@@ -13,17 +12,10 @@ import PainelBarbeiro from './PainelBarbeiro'
 import SuperAdmin from './SuperAdmin'
 import RequireAdminAuth from './RequireAdminAuth'
 
-// Este mesmo build/container atende dois domínios diferentes (ver index.html):
-// o principal (site do cliente) e um subdomínio próprio pro barbeiro
-// (teamantunes.nuuvsen.com.br). Usamos subdomínio em vez de só um caminho
-// porque o Chrome/Android não deixa instalar dois PWAs separados numa mesma
-// origem — assim os dois apps instalados ficam de verdade independentes.
-const EH_DOMINIO_BARBEIRO = typeof window !== 'undefined'
-  && window.location.hostname === 'teamantunes.nuuvsen.com.br'
-
 export default function App() {
   const [servicos, setServicos] = useState([])
   const [loading, setLoading] = useState(true)
+  const [erroCarregamento, setErroCarregamento] = useState(false)
 
   // Função para aplicar o tema no Documento
   const aplicarTema = (dados) => {
@@ -40,22 +32,15 @@ export default function App() {
     root.style.setProperty('--cor-texto-principal', cores.texto);
     root.style.setProperty('--cor-texto-secundario', cores.textoSecundario);
 
-    // Atualiza o Favicon — mesmo fix do Personalizacao.jsx: sem o removeAttribute('type'),
-    // um favicon customizado que não seja SVG podia simplesmente não aparecer (o <link>
-    // continuava anunciado como image/svg+xml pro navegador). E quando não tem favicon
-    // customizado (campo vazio/resetado), volta pro ícone padrão em vez de não fazer nada.
-    let link = document.querySelector("link[rel~='icon']");
-    if (!link) {
-      link = document.createElement('link');
-      link.rel = 'icon';
-      document.head.appendChild(link);
-    }
+    // Atualiza o Favicon
     if (favicon) {
+      let link = document.querySelector("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
       link.href = favicon;
-      link.removeAttribute('type');
-    } else {
-      link.href = '/favicon.svg';
-      link.setAttribute('type', 'image/svg+xml');
     }
 
     // Salva no cache local para o próximo carregamento ser instantâneo
@@ -84,11 +69,17 @@ export default function App() {
 
   // 2. Efeito para carregar os SERVIÇOS
   const carregarDados = async () => {
+    setErroCarregamento(false);
     try {
       const snap = await getDocs(collection(db, "servicos"));
       setServicos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
       console.error("Erro ao carregar serviços:", error);
+      // Bug real encontrado: sem isso, uma falha aqui (sem internet, Firestore fora do
+      // ar) fazia o app sair da tela de loading e cair direto no site do cliente com a
+      // lista de serviços vazia — parecia o site quebrado, sem nenhuma explicação pro
+      // usuário do que de fato aconteceu.
+      setErroCarregamento(true);
     } finally {
       setLoading(false);
     }
@@ -120,10 +111,6 @@ export default function App() {
 
   return (
     <>
-      {/* Aviso de "sem conexão" — fica de fora do BrowserRouter, então aparece em
-          QUALQUER rota (cliente, /admin, /barbeiro, /superadmin) sem precisar duplicar. */}
-      <ConnectionBanner />
-
       {/* 2. O Toaster injeta os avisos flutuantes em todas as telas do site */}
       <Toaster 
         position="top-right" 
@@ -143,7 +130,13 @@ export default function App() {
       />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={EH_DOMINIO_BARBEIRO ? <PainelBarbeiro /> : <Cliente servicos={servicos} />} />
+          <Route path="/" element={
+            <Cliente
+              servicos={servicos}
+              erroCarregarServicos={erroCarregamento}
+              aoTentarNovamenteCarregarServicos={carregarDados}
+            />
+          } />
           <Route path="/admin" element={
             <RequireAdminAuth configDoc="acessoAdmin" titulo="Acesso Restrito — Painel Admin">
               {/* BotMonitor fica só aqui dentro (painel admin logado). Antes ele estava

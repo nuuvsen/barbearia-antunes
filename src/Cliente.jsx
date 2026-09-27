@@ -5,6 +5,7 @@ import { Info, Bell } from 'lucide-react'
 import Swal from 'sweetalert2'
 import { BOT_URL } from './botConfig'
 import { reservarHorario, liberarHorario, entrarNaListaEspera, horaParaMinutos, horariosSeSobrepoe } from './bloqueioUtils'
+import AvisoConexao from './AvisoConexao'
 
 // Duração (minutos) do serviço/combo escolhido. Serviços normais guardam duracaoMinutos
 // (AdminServicos.jsx); combos exclusivos de plano guardam a duração direto em `tempo`, como
@@ -64,7 +65,7 @@ const FotoPadrao = () => (
   </div>
 )
 
-export default function Cliente({ servicos }) {
+export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovamenteCarregarServicos }) {
   // ESTADO DE TEMA CLARO/ESCURO
   const [isDark, setIsDark] = useState(true)
 
@@ -768,6 +769,7 @@ export default function Cliente({ servicos }) {
   if (sucesso) {
     return (
       <div style={themeStyles} className="min-h-screen w-full bg-[var(--cor-bg-geral)] text-[var(--cor-texto-principal)] flex flex-col items-center justify-center text-center p-6 animate-in zoom-in transition-colors duration-300">
+        <AvisoConexao />
         <div className="w-20 h-20 bg-green-600/20 rounded-full flex items-center justify-center mb-6 border-2 border-green-500">
           <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </div>
@@ -792,8 +794,9 @@ export default function Cliente({ servicos }) {
 
   return (
     <div style={themeStyles} className="min-h-screen w-full bg-[var(--cor-bg-geral)] text-[var(--cor-texto-principal)] font-sans transition-colors duration-300">
+      <AvisoConexao />
       <div className="max-w-md mx-auto p-6 min-h-screen pb-24">
-        
+
         <header className="mb-6 pt-4">
           <div className="flex justify-between items-center">
             <div onClick={() => window.location.reload()} className="cursor-pointer">
@@ -993,7 +996,23 @@ export default function Cliente({ servicos }) {
             {etapa === 1 && (
               <div className="space-y-3 animate-in fade-in slide-in-from-right-4 duration-300">
                 <h2 className="text-xs font-black text-[var(--cor-texto-secundario)] uppercase tracking-widest mb-4">Selecione o Corte</h2>
-                {listaParaMostrar.map(s => {
+                {/* Bug real encontrado: quando o carregamento inicial dos serviços falhava
+                    (sem internet, Firestore fora do ar), o app seguia adiante mesmo assim
+                    com a lista vazia — o cliente só via essa tela sem nenhum corte pra
+                    escolher, sem entender que era um problema de conexão e não a barbearia
+                    sem nenhum serviço cadastrado. */}
+                {erroCarregarServicos && listaParaMostrar.length === 0 ? (
+                  <div className="bg-[var(--cor-card)] border border-[var(--cor-primaria)]/30 rounded-2xl p-6 text-center space-y-3">
+                    <p className="font-black uppercase text-sm text-[var(--cor-primaria)]">Não foi possível carregar os serviços</p>
+                    <p className="text-xs text-[var(--cor-texto-secundario)]">Verifique sua conexão com a internet e tente novamente.</p>
+                    <button
+                      onClick={aoTentarNovamenteCarregarServicos}
+                      className="mt-2 bg-[var(--cor-primaria)] text-white font-black text-xs uppercase tracking-widest px-6 py-3 rounded-xl hover:opacity-80 transition-all"
+                    >
+                      Tentar novamente
+                    </button>
+                  </div>
+                ) : listaParaMostrar.map(s => {
                   const estaIncluso = modo === 'assinante_logado' && (perfil.servicosInclusos.includes(s.nome) || s.isCombo)
                   const temSaldo = modo === 'assinante_logado' && perfil.cortesRestantes > 0
                   return (
