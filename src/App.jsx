@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { db } from './firebase'
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore'
 import { Toaster } from 'react-hot-toast';
@@ -11,6 +11,17 @@ import Admin from './Admin'
 import PainelBarbeiro from './PainelBarbeiro'
 import SuperAdmin from './SuperAdmin'
 import RequireAdminAuth from './RequireAdminAuth'
+
+// O subdomínio teamantunes.nuuvsen.com.br é o app instalável do barbeiro (ver comentário
+// em index.html), mas isso SEMPRE foi só cosmético (troca o manifest/título da aba) — nunca
+// existiu, no código, nenhum redirecionamento de rota de fato. A raiz "/" desse subdomínio
+// sempre caiu na tela do CLIENTE (Cliente.jsx), igual ao domínio principal, porque o
+// React Router aqui decide a tela só pelo CAMINHO da URL, sem olhar pra qual domínio é.
+// Se isso "sempre funcionou" até agora, era porque os barbeiros chegavam direto em
+// "/barbeiro" (favorito, ícone do PWA instalado) — nunca pela raiz do domínio. Pra não
+// depender de ninguém lembrar de usar o caminho certo (nem de configuração nenhuma fora
+// daqui, tipo regra no Cloudflare), agora a raiz desse subdomínio redireciona sozinha.
+const EH_DOMINIO_BARBEIRO = typeof window !== 'undefined' && window.location.hostname === 'teamantunes.nuuvsen.com.br'
 
 export default function App() {
   const [servicos, setServicos] = useState([])
@@ -131,11 +142,15 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={
-            <Cliente
-              servicos={servicos}
-              erroCarregarServicos={erroCarregamento}
-              aoTentarNovamenteCarregarServicos={carregarDados}
-            />
+            EH_DOMINIO_BARBEIRO ? (
+              <Navigate to="/barbeiro" replace />
+            ) : (
+              <Cliente
+                servicos={servicos}
+                erroCarregarServicos={erroCarregamento}
+                aoTentarNovamenteCarregarServicos={carregarDados}
+              />
+            )
           } />
           <Route path="/admin" element={
             <RequireAdminAuth configDoc="acessoAdmin" titulo="Acesso Restrito — Painel Admin">
