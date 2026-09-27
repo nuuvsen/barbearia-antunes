@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Info, Calendar, Scissors, Settings, MessageSquare, Palette, ChevronDown } from 'lucide-react';
+import { APP_VERSION, APP_VERSION_DATA } from './version';
 
 export default function Sobre() {
   const [secaoAberta, setSecaoAberta] = useState(null);
@@ -57,6 +58,9 @@ export default function Sobre() {
         </h2>
         <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--cor-texto-secundario)' }}>
           Entenda como cada módulo do sistema funciona
+        </p>
+        <p className="text-[10px] font-black uppercase tracking-widest mt-4" style={{ color: 'var(--cor-primaria)' }}>
+          Versão {APP_VERSION} · Atualizado em {APP_VERSION_DATA}
         </p>
       </div>
 

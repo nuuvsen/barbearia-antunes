@@ -4,6 +4,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore'
 import toast from 'react-hot-toast'
 import { db } from './firebase'
 import Sobre from './Sobre.jsx';
+import { APP_VERSION } from './version';
 import { 
   LayoutDashboard, 
   Clock, 
@@ -159,9 +160,14 @@ export default function Admin({ servicos, aoMudar }) {
         {/* <-- ADICIONADO: Seção inferior com o Sobre acima do Sair --> */}
         <div className="mt-auto pt-6 border-t flex flex-col gap-2" style={{ borderTopColor: 'var(--cor-borda)' }}>
           <NavItem id="sobre" label="Sobre o Sistema" icon={HelpCircle} />
-          
-          <Link 
-            to="/" 
+          {/* Versão do sistema — dá pra conferir de relance, sem precisar entrar em
+              "Sobre o Sistema", se um deploy novo realmente chegou no ar. */}
+          <p className="px-3 text-[9px] font-black uppercase tracking-widest opacity-40" style={{ color: 'var(--cor-texto-secundario)' }}>
+            Versão {APP_VERSION}
+          </p>
+
+          <Link
+            to="/"
             className="flex items-center gap-3 p-3 text-xs font-black uppercase tracking-widest transition-colors hover:opacity-80"
             style={{ color: 'var(--cor-texto-secundario)' }}
           >
