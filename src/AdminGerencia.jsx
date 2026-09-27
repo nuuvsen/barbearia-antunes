@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { db } from './firebase'
 import { collection, getDocs, doc, getDoc, onSnapshot, updateDoc, query, where } from 'firebase/firestore'
-import { 
-  Banknote, CreditCard, QrCode, TrendingUp, 
+import {
+  Banknote, CreditCard, QrCode, TrendingUp,
   Scissors, User, Save, XCircle, CheckCircle2, Calendar, Edit2, ShoppingBag, Wallet,
-  DollarSign, Receipt, TrendingDown, Eye, Activity
+  DollarSign, Receipt, TrendingDown, Eye, Activity,
+  Users, UserCheck, UserPlus, UserX, Repeat, BadgeCheck, ShieldCheck
 } from 'lucide-react'
 import AdminComissoes from './AdminComissoes'
 import TicketMedio from './TicketMedio'
@@ -43,10 +44,24 @@ export default function AdminGerencia() {
     despesasMes: []
   });
   
-  const [previewInfo, setPreviewInfo] = useState(null); 
-  const [mostrarTicketMedio, setMostrarTicketMedio] = useState(false); 
-  const [mostrarDespesas, setMostrarDespesas] = useState(false); 
-  const [agendamentosDados, setAgendamentosDados] = useState([]); 
+  const [previewInfo, setPreviewInfo] = useState(null);
+  const [mostrarTicketMedio, setMostrarTicketMedio] = useState(false);
+  const [mostrarDespesas, setMostrarDespesas] = useState(false);
+  const [agendamentosDados, setAgendamentosDados] = useState([]);
+
+  // ESTADOS DA VISÃO GERAL DE CLIENTES (cadastro, retenção, atividade)
+  const [statsClientes, setStatsClientes] = useState({
+    cadastrados: 0,
+    jaFrequentaram: 0,
+    novosNoMes: 0,
+    ativos: 0,
+    inativos: 0,
+    taxaRetencao: 0,
+    frequenciaMedia: 0,
+    assinantesAtivos: 0
+  });
+  const [listaClientesRisco, setListaClientesRisco] = useState([]);
+  const [mostrarClientesRisco, setMostrarClientesRisco] = useState(false);
 
   const [cores, setCores] = useState({
     primaria: '#922020',
@@ -205,6 +220,134 @@ export default function AdminGerencia() {
     return null;
   };
 
+  // Converte qualquer um dos dois formatos de data (ver normalizarData acima) num
+  // objeto Date de verdade, usando o construtor numérico (ano, mesIndex, dia) —
+  // que aceita dia/mês sem zero à esquerda, ao contrário de "new Date('2026-5-5')".
+  const dataParaObjeto = (str) => {
+    const n = normalizarData(str);
+    if (!n) return null;
+    const d = new Date(Number(n.ano), Number(n.mes) - 1, Number(n.dia));
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  // Janela (em dias) considerada "cliente ativo": o ciclo típico de corte de cabelo/
+  // barba gira em torno de 3 a 6 semanas — 45 dias dá uma folga confortável sem tratar
+  // como "sumido" quem só atrasou um pouco o próximo corte.
+  const DIAS_CLIENTE_ATIVO = 45;
+
+  // Estatísticas de clientes: cadastro, retenção, atividade e assinaturas. Recebe os
+  // agendamentos (sem cancelados/bloqueios) e as comandas já buscados em calcularRelatorios,
+  // pra não repetir essas duas buscas no Firestore. Uma "visita" conta tanto agendamento
+  // (qualquer status != 'Cancelado' — mesma regra usada na segmentação de campanhas em
+  // GerenciadorBot.jsx) quanto comanda de balcão já paga (status === 'Concluído', igual ao
+  // filtro que o restante desta tela já usa pro faturamento) — sem isso, cliente que só
+  // compra por comanda/balcão nunca aparecia como "já frequentou" ou "cliente ativo".
+  const calcularEstatisticasClientes = async (todosAgendamentosValidos, todasComandasValidas) => {
+    try {
+      const snapClientes = await getDocs(collection(db, "clientes"));
+      const clientesCadastrados = {};
+      snapClientes.forEach(docSnap => {
+        clientesCadastrados[docSnap.id] = { telefone: docSnap.id, ...docSnap.data() };
+      });
+
+      const visitasPorTelefone = {};
+      const registrarVisita = (tel, nomeCliente, dataStr) => {
+        if (!tel) return;
+        if (!visitasPorTelefone[tel]) {
+          visitasPorTelefone[tel] = { total: 0, primeira: null, ultima: null, nome: nomeCliente || '' };
+        }
+        const v = visitasPorTelefone[tel];
+        v.total++;
+        if (!v.nome && nomeCliente) v.nome = nomeCliente;
+
+        const dataObj = dataParaObjeto(dataStr);
+        if (dataObj) {
+          if (!v.primeira || dataObj < v.primeira) v.primeira = dataObj;
+          if (!v.ultima || dataObj > v.ultima) v.ultima = dataObj;
+        }
+      };
+
+      todosAgendamentosValidos.forEach(ag => {
+        if (ag.status === 'Cancelado') return;
+        registrarVisita(ag.clienteTelefone, ag.clienteNome, ag.data);
+      });
+
+      (todasComandasValidas || []).forEach(cmd => {
+        if (cmd.status !== 'Concluído') return;
+        registrarVisita(cmd.clienteTelefone, cmd.clienteNome, cmd.data);
+      });
+
+      // União: cliente cadastrado sem nenhum atendimento ainda entra em "cadastrados"
+      // mas não em "já frequentaram"; e um telefone com histórico de atendimento que já
+      // não existe mais na coleção "clientes" (cadastro removido) ainda conta como
+      // alguém que já frequentou a barbearia.
+      const todosTelefones = new Set([
+        ...Object.keys(clientesCadastrados),
+        ...Object.keys(visitasPorTelefone)
+      ]);
+
+      const agora = new Date();
+      let jaFrequentaram = 0;
+      let novosNoMes = 0;
+      let ativos = 0;
+      let somaVisitas = 0;
+      const risco = [];
+
+      todosTelefones.forEach(tel => {
+        const v = visitasPorTelefone[tel];
+        if (!v || v.total === 0) return; // cadastrado mas nunca veio a um atendimento
+
+        jaFrequentaram++;
+        somaVisitas += v.total;
+
+        if (v.primeira && v.primeira.getMonth() === agora.getMonth() && v.primeira.getFullYear() === agora.getFullYear()) {
+          novosNoMes++;
+        }
+
+        const diasSemVisita = v.ultima ? (agora - v.ultima) / (1000 * 60 * 60 * 24) : null;
+        if (diasSemVisita !== null && diasSemVisita <= DIAS_CLIENTE_ATIVO) {
+          ativos++;
+        } else {
+          const cadastro = clientesCadastrados[tel];
+          risco.push({
+            telefone: tel,
+            nome: (cadastro && cadastro.nome) || v.nome || 'Cliente sem nome',
+            diasSemVisita: diasSemVisita !== null ? Math.floor(diasSemVisita) : null
+          });
+        }
+      });
+
+      risco.sort((a, b) => (b.diasSemVisita ?? -1) - (a.diasSemVisita ?? -1));
+
+      const inativos = jaFrequentaram - ativos;
+      const taxaRetencao = jaFrequentaram > 0 ? (ativos / jaFrequentaram) * 100 : 0;
+      const frequenciaMedia = jaFrequentaram > 0 ? somaVisitas / jaFrequentaram : 0;
+
+      // Assinante ativo: tem plano vinculado e a validade (dataLimite, gravada em
+      // AdminClientes.jsx/Cliente.jsx ao vender/renovar o plano) ainda não venceu.
+      const assinantesAtivos = Object.values(clientesCadastrados).filter(c => {
+        if (!c.planoId) return false;
+        const dl = dataParaObjeto(c.dataLimite);
+        if (!dl) return true; // tem plano mas sem data limite registrada — considera ativo
+        return dl >= agora;
+      }).length;
+
+      setStatsClientes({
+        cadastrados: Object.keys(clientesCadastrados).length,
+        jaFrequentaram,
+        novosNoMes,
+        ativos,
+        inativos,
+        taxaRetencao,
+        frequenciaMedia,
+        assinantesAtivos
+      });
+      setListaClientesRisco(risco);
+    } catch (error) {
+      console.error("Erro ao calcular estatísticas de clientes:", error);
+    }
+  };
+
   const calcularRelatorios = async () => {
     const snap = await getDocs(collection(db, "agendamentos"))
     // Bloqueios manuais de horário (ver bloqueioUtils.js) não são agendamentos reais — ficam
@@ -216,6 +359,10 @@ export default function AdminGerencia() {
 
     const snapComandas = await getDocs(collection(db, "comandas"))
     const todasComandas = snapComandas.docs.map(doc => ({ id: doc.id, origem: 'comanda', ...doc.data() }));
+
+    // Espera terminar antes de seguir: essa TV Box já é limitada, evitamos disparar
+    // buscas simultâneas extras no Firestore só pra ganhar alguns milissegundos.
+    await calcularEstatisticasClientes(todosAgendamentos, todasComandas);
 
     // TicketMedio.jsx só recebia "todosAgendamentos" (agenda online), deixando toda venda
     // de balcão/comanda fora do ticket médio, do ranking de clientes e da divisão por forma
@@ -404,6 +551,43 @@ export default function AdminGerencia() {
         }} />
       )}
 
+      {/* MODAL DE CLIENTES EM RISCO */}
+      {mostrarClientesRisco && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in duration-200">
+          <div className="rounded-[2rem] p-6 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden relative"
+                style={{ backgroundColor: cores.card, borderColor: cores.borda, borderWidth: '1px' }}>
+
+            <div className="flex justify-between items-center mb-6 pb-4 border-b" style={{ borderColor: hexToRgba(cores.borda, 0.1) }}>
+              <div>
+                <h2 className="text-2xl font-black uppercase tracking-tighter" style={{ color: cores.texto }}>
+                  Clientes Em Risco
+                </h2>
+                <p className="text-[10px] uppercase font-bold opacity-60">Sem voltar há mais de {DIAS_CLIENTE_ATIVO} dias — bons candidatos a uma campanha de reativação</p>
+              </div>
+              <button onClick={() => setMostrarClientesRisco(false)} className="p-2 rounded-full hover:bg-black/5 transition-colors">
+                <XCircle size={28} className="text-red-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
+              {listaClientesRisco.length > 0 ? listaClientesRisco.map((c, idx) => (
+                <div key={idx} className="flex justify-between items-center p-4 rounded-2xl border" style={{ backgroundColor: hexToRgba(cores.fundo, 0.1), borderColor: hexToRgba(cores.borda, 0.1) }}>
+                  <div>
+                    <p className="font-bold text-sm uppercase">{c.nome}</p>
+                    <p className="text-[10px] opacity-60 uppercase">{c.telefone}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-black text-red-500 text-sm">
+                      {c.diasSemVisita === null ? 'Data não registrada' : `${c.diasSemVisita} dias sem vir`}
+                    </p>
+                  </div>
+                </div>
+              )) : <p className="text-center font-bold opacity-50 py-10">Nenhum cliente em risco no momento.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL DE PREVIEW FINANCEIRO */}
       {previewInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-in fade-in duration-200">
@@ -589,6 +773,98 @@ export default function AdminGerencia() {
       </div>
       {/* ========================================================= */}
 
+      {/* ========================================================= */}
+      {/* VISÃO GERAL DE CLIENTES */}
+      {/* ========================================================= */}
+      <div className="mb-10">
+        <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4 flex items-center gap-2"
+            style={{ color: cores.textoSecundario }}>
+          <Users size={16} /> Visão Geral de Clientes
+        </h2>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Cadastrados</p>
+              <Users size={18} className="text-blue-500" />
+            </div>
+            <h2 className="text-3xl font-black text-blue-500 truncate">{statsClientes.cadastrados}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Total na base de clientes</p>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Já Frequentaram</p>
+              <UserCheck size={18} className="text-green-500" />
+            </div>
+            <h2 className="text-3xl font-black text-green-500 truncate">{statsClientes.jaFrequentaram}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Ao menos 1 atendimento</p>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Novos no Mês</p>
+              <UserPlus size={18} className="text-teal-500" />
+            </div>
+            <h2 className="text-3xl font-black text-teal-500 truncate">{statsClientes.novosNoMes}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">1º atendimento neste mês</p>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Assinantes Ativos</p>
+              <BadgeCheck size={18} className="text-purple-500" />
+            </div>
+            <h2 className="text-3xl font-black text-purple-500 truncate">{statsClientes.assinantesAtivos}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Plano dentro da validade</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Clientes Ativos</p>
+              <Repeat size={18} className="text-green-500" />
+            </div>
+            <h2 className="text-3xl font-black text-green-500 truncate">{statsClientes.ativos}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Voltaram há até {DIAS_CLIENTE_ATIVO} dias</p>
+          </div>
+
+          <div
+            onClick={() => setMostrarClientesRisco(true)}
+            className="p-6 rounded-3xl border flex flex-col justify-between cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition-all relative group"
+            style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Em Risco / Inativos</p>
+              <UserX size={18} className="text-red-500" />
+            </div>
+            <h2 className="text-3xl font-black text-red-500 truncate">{statsClientes.inativos}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Sem voltar há mais de {DIAS_CLIENTE_ATIVO} dias</p>
+            <div className="absolute inset-0 bg-red-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex items-center justify-center z-20">
+              <span className="bg-white/90 text-red-600 text-[10px] font-black uppercase px-3 py-1 rounded-full flex items-center gap-1 shadow-sm"><Eye size={12}/> Ver Lista</span>
+            </div>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Taxa de Retenção</p>
+              <ShieldCheck size={18} className="text-blue-500" />
+            </div>
+            <h2 className="text-3xl font-black text-blue-500 truncate">{Math.round(statsClientes.taxaRetencao)}%</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Frequentaram e seguem ativos</p>
+          </div>
+
+          <div className="p-6 rounded-3xl border flex flex-col justify-between" style={{ backgroundColor: cores.card, borderColor: cores.borda }}>
+            <div className="flex justify-between items-start mb-2">
+              <p className="text-[10px] uppercase font-black opacity-50" style={{ color: cores.textoSecundario }}>Frequência Média</p>
+              <Scissors size={18} className="text-orange-500" />
+            </div>
+            <h2 className="text-3xl font-black text-orange-500 truncate">{statsClientes.frequenciaMedia.toFixed(1)}</h2>
+            <p className="text-[9px] font-bold opacity-50 mt-1">Cortes por cliente (histórico)</p>
+          </div>
+        </div>
+      </div>
+      {/* ========================================================= */}
 
       {/* BLOCO 1: ATIVIDADE, DESEMPENHO E TICKET MÉDIO */}
       <h2 className="text-xs font-black uppercase tracking-[0.2em] mb-4 text-center md:text-left mt-8 flex items-center gap-2" style={{ color: cores.textoSecundario }}>
