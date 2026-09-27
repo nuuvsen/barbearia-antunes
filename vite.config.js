@@ -17,6 +17,10 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registramos o Service Worker manualmente em main.jsx (virtual:pwa-register) em vez
+      // de deixar o VitePWA injetar o script automático — só assim dá pra forçar uma
+      // checagem de atualização toda vez que o app volta a ficar visível (ver main.jsx).
+      injectRegister: false,
       includeAssets: ['favicon.png', 'icon-192x192.png', 'icon-512x512.png'],
       manifest: false, // Diz ao plugin para usar o seu manifest.json existente na pasta public
       // Trocado de "generateSW" (padrão, automático) para "injectManifest": precisamos de um
