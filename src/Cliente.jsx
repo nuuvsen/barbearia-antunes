@@ -18,6 +18,11 @@ const duracaoDoServico = (servico) => {
   if (servico.isCombo && servico.tempo) return Number(servico.tempo) || null
   return null
 }
+
+// Bug real encontrado: os campos de telefone/WhatsApp aceitavam letra normalmente (eram
+// inputs de texto comuns, sem nenhuma filtragem) — bastava colar ou digitar qualquer coisa.
+// Mesmo padrão de "só dígito" já usado em AdminServicos.jsx (replace(/\D/g, '')).
+const apenasDigitos = (valor) => (valor || '').replace(/\D/g, '')
 import { ativarNotificacoes } from './firebaseMessaging'
 
 // Avisa o(s) barbeiro(s) por notificação push (não bloqueia a ação principal se falhar —
@@ -465,7 +470,7 @@ export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovame
       html: `
         <div style="display:block; width:100%; margin-bottom:14px; text-align:left;">
           <label style="display:block; font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; color:#6b7280;">Seu WhatsApp</label>
-          <input id="swal-telefone-plano" class="swal2-input" style="display:block; width:100%; margin:0; box-sizing:border-box;" placeholder="53999999999" value="${(contato.telefone || '').replace(/"/g, '&quot;')}">
+          <input id="swal-telefone-plano" inputmode="numeric" class="swal2-input" style="display:block; width:100%; margin:0; box-sizing:border-box;" placeholder="53999999999" value="${(contato.telefone || '').replace(/"/g, '&quot;')}">
         </div>
         <div style="display:block; width:100%; text-align:left;">
           <label style="display:block; font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; color:#6b7280;">Seu Nome</label>
@@ -487,6 +492,12 @@ export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovame
 
         let timeoutBusca = null
         inputTelefone.addEventListener('input', () => {
+          // Filtra letra/símbolo em tempo real (mesmo bug do resto dos campos de telefone
+          // do site — este aqui é um <input> "cru" dentro do HTML do SweetAlert2, não um
+          // input React comum, então a filtragem tem que ser feita aqui manualmente.
+          const digitosApenas = apenasDigitos(inputTelefone.value)
+          if (inputTelefone.value !== digitosApenas) inputTelefone.value = digitosApenas
+
           if (timeoutBusca) clearTimeout(timeoutBusca)
           timeoutBusca = setTimeout(async () => {
             const tel = inputTelefone.value.trim()
@@ -922,7 +933,7 @@ export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovame
               <h2 className="text-2xl font-black italic uppercase tracking-tighter text-[var(--cor-texto-principal)]">Área do <span className="text-[var(--cor-primaria)]">Assinante</span></h2>
             </div>
             <form onSubmit={fazerLogin} className="space-y-4">
-              <input required value={telefoneLogin} onChange={e => setTelefoneLogin(e.target.value)} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[var(--cor-card)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] text-center text-xl font-black tracking-widest transition-colors" />
+              <input required inputMode="numeric" value={telefoneLogin} onChange={e => setTelefoneLogin(apenasDigitos(e.target.value))} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[var(--cor-card)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] text-center text-xl font-black tracking-widest transition-colors" />
               {erroLogin && <p className="text-[var(--cor-primaria)] text-xs text-center font-bold">{erroLogin}</p>}
               <button type="submit" className="w-full bg-[var(--cor-primaria)] text-white font-black py-5 rounded-2xl uppercase tracking-widest hover:opacity-90 shadow-lg">Entrar no Plano</button>
             </form>
@@ -936,7 +947,7 @@ export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovame
               <p className="text-xs text-[var(--cor-texto-secundario)] mt-2">Acesse seu histórico e gerencie suas reservas</p>
             </div>
             <form onSubmit={buscarHistorico} className="space-y-4">
-              <input required value={telefoneHistorico} onChange={e => setTelefoneHistorico(e.target.value)} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[var(--cor-card)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] text-center text-xl font-black tracking-widest transition-colors" />
+              <input required inputMode="numeric" value={telefoneHistorico} onChange={e => setTelefoneHistorico(apenasDigitos(e.target.value))} placeholder="Seu Telefone (WhatsApp)" className="w-full bg-[var(--cor-card)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] text-center text-xl font-black tracking-widest transition-colors" />
               <button type="submit" disabled={carregandoHistorico} className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] hover:border-[var(--cor-primaria)] text-[var(--cor-texto-principal)] font-black py-5 rounded-2xl uppercase tracking-widest transition-all">
                 {carregandoHistorico ? 'Buscando...' : 'Ver Meu Histórico'}
               </button>
@@ -1186,7 +1197,7 @@ export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovame
                         <p className="text-center text-[var(--cor-texto-principal)] font-black uppercase text-sm mb-1">Dia lotado</p>
                         <p className="text-center text-xs text-[var(--cor-texto-secundario)] mb-5">Todos os horários deste dia já estão ocupados. Entre na lista de espera e avisaremos se algum vagar.</p>
                         <div className="space-y-3">
-                          <input value={contato.telefone} onChange={e => setContato({...contato, telefone: e.target.value})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-4 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors text-sm" />
+                          <input inputMode="numeric" value={contato.telefone} onChange={e => setContato({...contato, telefone: apenasDigitos(e.target.value)})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-4 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors text-sm" />
                           <input value={contato.nome} onChange={e => setContato({...contato, nome: e.target.value})} placeholder="Seu Nome Completo" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-4 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors text-sm" />
                           <button onClick={entrarNaFila} disabled={entrandoNaFila} className="w-full bg-[var(--cor-primaria)] text-white font-black py-4 rounded-2xl hover:opacity-90 shadow-lg uppercase tracking-widest text-xs transition-opacity">
                             {entrandoNaFila ? 'Entrando...' : 'Entrar na Lista de Espera'}
@@ -1221,7 +1232,7 @@ export default function Cliente({ servicos, erroCarregarServicos, aoTentarNovame
                 </div>
 
                 <form onSubmit={finalizarAgendamento} className="space-y-4">
-                  <input required value={contato.telefone} onChange={e => setContato({...contato, telefone: e.target.value})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors" />
+                  <input required inputMode="numeric" value={contato.telefone} onChange={e => setContato({...contato, telefone: apenasDigitos(e.target.value)})} placeholder="Seu WhatsApp (ex: 53999999999)" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors" />
                   <input required value={contato.nome} onChange={e => setContato({...contato, nome: e.target.value})} placeholder="Seu Nome Completo" className="w-full bg-[var(--cor-bg-geral)] border border-[var(--cor-borda)] p-5 rounded-2xl text-[var(--cor-texto-principal)] outline-none focus:border-[var(--cor-primaria)] transition-colors" />
                   
                   <button type="submit" disabled={salvando} className="w-full bg-[var(--cor-primaria)] text-white font-black py-5 rounded-2xl hover:opacity-90 shadow-lg uppercase tracking-widest mt-4 transition-opacity">
