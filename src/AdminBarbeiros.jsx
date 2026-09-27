@@ -218,15 +218,21 @@ export default function AdminBarbeiros() {
           if (paraMigrarTrava.length > 0) {
             await Promise.all(paraMigrarTrava.map(async d => {
               const dados = d.data();
-              await liberarHorario(barbeiroAtual.nome, dados.data, dados.hora);
-              await setDoc(doc(db, "travasHorario", gerarIdTravaHorario(form.nome, dados.data, dados.hora)), {
-                barbeiro: form.nome,
-                data: dados.data,
-                hora: dados.hora,
-                colecao: "agendamentos",
-                agendamentoId: d.id,
-                criadoEm: new Date().toISOString()
-              });
+              // Um corte cuja duração ocupa mais de um slot da grade tem uma trava por slot
+              // (dados.horariosOcupados — ver bloqueioUtils.js); sem migrar todas elas, as
+              // travas extras ficariam presas pra sempre com o nome antigo do barbeiro.
+              const horasParaMigrar = (dados.horariosOcupados && dados.horariosOcupados.length > 0) ? dados.horariosOcupados : [dados.hora];
+              await Promise.all(horasParaMigrar.map(async (horaMigrar) => {
+                await liberarHorario(barbeiroAtual.nome, dados.data, horaMigrar);
+                await setDoc(doc(db, "travasHorario", gerarIdTravaHorario(form.nome, dados.data, horaMigrar)), {
+                  barbeiro: form.nome,
+                  data: dados.data,
+                  hora: horaMigrar,
+                  colecao: "agendamentos",
+                  agendamentoId: d.id,
+                  criadoEm: new Date().toISOString()
+                });
+              }));
             }));
           }
         }

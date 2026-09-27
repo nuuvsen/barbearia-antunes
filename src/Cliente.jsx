@@ -4,7 +4,19 @@ import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, limi
 import { Info, Bell } from 'lucide-react'
 import Swal from 'sweetalert2'
 import { BOT_URL } from './botConfig'
-import { reservarHorario, liberarHorario, entrarNaListaEspera } from './bloqueioUtils'
+import { reservarHorario, liberarHorario, entrarNaListaEspera, horaParaMinutos, horariosSeSobrepoe } from './bloqueioUtils'
+
+// Duração (minutos) do serviço/combo escolhido. Serviços normais guardam duracaoMinutos
+// (AdminServicos.jsx); combos exclusivos de plano guardam a duração direto em `tempo`, como
+// um número de minutos puro (ver AdminPlanos.jsx) — sem o texto livre "1h 30min" que os
+// serviços tinham antes. Retorna null se não der pra determinar (deixa quem chamar decidir
+// o fallback, geralmente o intervalo configurado da agenda).
+const duracaoDoServico = (servico) => {
+  if (!servico) return null
+  if (servico.duracaoMinutos) return Number(servico.duracaoMinutos) || null
+  if (servico.isCombo && servico.tempo) return Number(servico.tempo) || null
+  return null
+}
 import { ativarNotificacoes } from './firebaseMessaging'
 
 // Avisa o(s) barbeiro(s) por notificação push (não bloqueia a ação principal se falhar —
@@ -212,50 +224,24 @@ export default function Cliente({ servicos }) {
     setEtapa(4)
     setNaListaEspera(false)
     const diaSemana = dia.dataReal.getDay()
-    const diaSigla = MAPA_DIAS[diaSemana] 
-    
+    const diaSigla = MAPA_DIAS[diaSemana]
+
     const ocorrenciaSemana = Math.ceil(dia.dataReal.getDate() / 7);
-    const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r => 
+    const regraSemanaDinamica = (configAgenda.regrasSemanas || []).find(r =>
         r.diaSemana === diaSemana && r.semanas.includes(ocorrenciaSemana)
     );
     const regraDoDia = configAgenda.excecoes?.[dia.formatoAPI] || regraSemanaDinamica || configAgenda.horariosPorDia[diaSemana];
-    
-    let ocupados = []
 
-    if (escolha.barbeiro.id === 'qualquer') {
-      const q = query(collection(db, "agendamentos"), where("data", "==", dia.formatoAPI))
-      const snap = await getDocs(q)
-      // Bug real encontrado: aqui contava QUANTIDADE de agendamentos por horário, não quantos
-      // barbeiros DISTINTOS estavam ocupados. Se o mesmo barbeiro tivesse 2 registros no mesmo
-      // horário (ex.: um bloqueio administrativo em cima de um agendamento já existente), a
-      // contagem batia no total de barbeiros ativos e o horário sumia da lista pra "Sem
-      // Preferência" — mesmo com outro barbeiro genuinamente livre naquele horário. Corrigido
-      // para contar barbeiros distintos ocupados, que é o que realmente importa aqui (a
-      // atribuição definitiva, em finalizarAgendamento, já faz essa checagem por nome corretamente).
-      const barbeirosOcupadosPorHora = {}
-      snap.docs.filter(d => d.data().status !== 'Cancelado').forEach(d => {
-        const dados = d.data()
-        const h = dados.hora
-        if (!barbeirosOcupadosPorHora[h]) barbeirosOcupadosPorHora[h] = new Set()
-        barbeirosOcupadosPorHora[h].add(dados.barbeiro)
-      })
-      const barbeirosAtivosHoje = barbeiros.filter(b => b.diasTrabalho?.[diaSigla] !== false).length || 1
-      for (const [hora, ocupadosSet] of Object.entries(barbeirosOcupadosPorHora)) {
-        if (ocupadosSet.size >= barbeirosAtivosHoje) ocupados.push(hora)
-      }
-    } else {
-      const q = query(
-        collection(db, "agendamentos"), 
-        where("barbeiro", "==", escolha.barbeiro.nome),
-        where("data", "==", dia.formatoAPI)
-      )
-      const snap = await getDocs(q)
-      ocupados = snap.docs
-        .filter(d => d.data().status !== 'Cancelado')
-        .map(d => d.data().hora)
-    }
-
-    setHorariosOcupados(ocupados)
+    const intervaloConfig = Number(configAgenda.intervalo) || 30
+    // Duração de cada atendimento já existente: usa a duração congelada no próprio
+    // agendamento (dados.duracao, gravada a partir desta atualização — ver
+    // finalizarAgendamento) quando existir; senão tenta achar pelo nome no catálogo atual de
+    // serviços; e só em último caso cai no intervalo padrão da agenda. Isso cobre tanto
+    // agendamentos novos quanto os antigos, feitos antes da duração passar a valer de verdade.
+    const duracaoPorNomeServico = {}
+    servicos.forEach(s => { duracaoPorNomeServico[s.nome] = Number(s.duracaoMinutos) || intervaloConfig })
+    const obterDuracaoDoAgendamento = (dados) => Number(dados.duracao) || duracaoPorNomeServico[dados.servico] || intervaloConfig
+    const duracaoEscolhida = duracaoDoServico(escolha.servico) || intervaloConfig
 
     const gerarSlots = (inicio, fim, intervalo) => {
       if (!inicio || !fim) return [];
@@ -265,8 +251,8 @@ export default function Cliente({ servicos }) {
       let totalFim = fimMin[0] * 60 + fimMin[1]
       let atual = h * 60 + m
       const agora = new Date()
-      const eHoje = dia.dataReal.getDate() === agora.getDate() && 
-                    dia.dataReal.getMonth() === agora.getMonth() && 
+      const eHoje = dia.dataReal.getDate() === agora.getDate() &&
+                    dia.dataReal.getMonth() === agora.getMonth() &&
                     dia.dataReal.getFullYear() === agora.getFullYear()
       const minutosAtuais = agora.getHours() * 60 + agora.getMinutes()
 
@@ -281,13 +267,70 @@ export default function Cliente({ servicos }) {
       return slots
     }
 
+    let slotsDoDia = []
     if (regraDoDia && regraDoDia.ativo) {
       const t1 = gerarSlots(regraDoDia.t1Ini, regraDoDia.t1Fim, configAgenda.intervalo)
       const t2 = gerarSlots(regraDoDia.t2Ini, regraDoDia.t2Fim, configAgenda.intervalo)
-      setHorariosGerados([...t1, ...t2])
-    } else {
-      setHorariosGerados([]) 
+      slotsDoDia = [...t1, ...t2]
     }
+    setHorariosGerados(slotsDoDia)
+
+    // Até onde um corte iniciado num slot pode ir sem estourar o turno (1 ou 2) em que esse
+    // slot está — sem isso, um serviço longo escolhido perto do fim do expediente continuaria
+    // aparecendo como disponível mesmo terminando depois do fechamento.
+    const fimDoTurno = (horaSlot) => {
+      const minSlot = horaParaMinutos(horaSlot)
+      const t1Ini = regraDoDia?.t1Ini ? horaParaMinutos(regraDoDia.t1Ini) : null
+      const t1Fim = regraDoDia?.t1Fim ? horaParaMinutos(regraDoDia.t1Fim) : null
+      if (t1Ini !== null && t1Fim !== null && minSlot >= t1Ini && minSlot < t1Fim) return t1Fim
+      return regraDoDia?.t2Fim ? horaParaMinutos(regraDoDia.t2Fim) : null
+    }
+
+    let ocupados = []
+
+    if (escolha.barbeiro.id === 'qualquer') {
+      const q = query(collection(db, "agendamentos"), where("data", "==", dia.formatoAPI))
+      const snap = await getDocs(q)
+      // Agrupa por barbeiro (com a duração de cada atendimento dele), não só por hora exata:
+      // pra "Sem Preferência" um slot só é oferecido se existir AO MENOS UM barbeiro ativo no
+      // dia livre durante o corte INTEIRO, não apenas no instante em que ele começa.
+      const agendamentosPorBarbeiro = {}
+      snap.docs.filter(d => d.data().status !== 'Cancelado').forEach(d => {
+        const dados = d.data()
+        if (!agendamentosPorBarbeiro[dados.barbeiro]) agendamentosPorBarbeiro[dados.barbeiro] = []
+        agendamentosPorBarbeiro[dados.barbeiro].push({ hora: dados.hora, duracao: obterDuracaoDoAgendamento(dados) })
+      })
+      const barbeirosAtivosHoje = barbeiros.filter(b => b.diasTrabalho?.[diaSigla] !== false).map(b => b.nome)
+
+      ocupados = slotsDoDia.filter(horaCandidata => {
+        const fim = fimDoTurno(horaCandidata)
+        if (fim !== null && horaParaMinutos(horaCandidata) + duracaoEscolhida > fim) return true
+        if (barbeirosAtivosHoje.length === 0) return false
+        const algumLivre = barbeirosAtivosHoje.some(nomeBarbeiro => {
+          const ocupacoes = agendamentosPorBarbeiro[nomeBarbeiro] || []
+          return !ocupacoes.some(a => horariosSeSobrepoe(horaCandidata, duracaoEscolhida, a.hora, a.duracao))
+        })
+        return !algumLivre
+      })
+    } else {
+      const q = query(
+        collection(db, "agendamentos"),
+        where("barbeiro", "==", escolha.barbeiro.nome),
+        where("data", "==", dia.formatoAPI)
+      )
+      const snap = await getDocs(q)
+      const ocupacoesBarbeiro = snap.docs
+        .filter(d => d.data().status !== 'Cancelado')
+        .map(d => { const dados = d.data(); return { hora: dados.hora, duracao: obterDuracaoDoAgendamento(dados) } })
+
+      ocupados = slotsDoDia.filter(horaCandidata => {
+        const fim = fimDoTurno(horaCandidata)
+        if (fim !== null && horaParaMinutos(horaCandidata) + duracaoEscolhida > fim) return true
+        return ocupacoesBarbeiro.some(a => horariosSeSobrepoe(horaCandidata, duracaoEscolhida, a.hora, a.duracao))
+      })
+    }
+
+    setHorariosOcupados(ocupados)
   }
 
   const fazerLogin = async (e) => {
@@ -365,8 +408,11 @@ export default function Cliente({ servicos }) {
         await updateDoc(doc(db, "agendamentos", agendamento.id), { status: 'Cancelado' })
 
         // Libera a trava de horário (ver bloqueioUtils.js) pra esse horário voltar a
-        // ficar disponível para outra pessoa agendar.
-        await liberarHorario(agendamento.barbeiro, agendamento.data, agendamento.hora)
+        // ficar disponível para outra pessoa agendar. horariosExtras cobre os demais slots
+        // que esse agendamento também travava, quando o serviço durava mais de um slot.
+        await liberarHorario(agendamento.barbeiro, agendamento.data, agendamento.hora, {
+          horariosExtras: (agendamento.horariosOcupados || []).slice(1)
+        })
 
         if (agendamento.preco === 'PLANO' || agendamento.preco === 'PLANO ATIVO') {
           const clienteRef = doc(db, "clientes", agendamento.clienteTelefone)
@@ -572,11 +618,18 @@ export default function Cliente({ servicos }) {
         await updateDoc(clienteRef, { totalVisitas: totalAtual + 1 });
       }
 
+      // Duração congelada no momento do agendamento — passa a valer de verdade pra reservar
+      // os horários seguintes (ver reservarHorario/bloqueioUtils.js), e fica gravada aqui pra
+      // nunca mudar depois mesmo que o tempo do serviço seja editado no cadastro.
+      const intervaloAgenda = Number(configAgenda?.intervalo) || 30
+      const duracaoDoAgendamento = duracaoDoServico(escolha.servico) || intervaloAgenda
+
       const dadosBaseAgendamento = {
         servico: escolha.servico.nome,
         preco: (estaInclusoNoPlano && perfil.cortesRestantes > 0) ? "PLANO ATIVO" : escolha.servico.preco,
         data: escolha.data,
         hora: escolha.hora,
+        duracao: duracaoDoAgendamento,
         clienteNome: contato.nome,
         clienteTelefone: contato.telefone,
         dataCriacao: new Date().toISOString(),
@@ -603,6 +656,8 @@ export default function Cliente({ servicos }) {
               barbeiro: candidato.nome,
               data: escolha.data,
               hora: escolha.hora,
+              duracaoMinutos: duracaoDoAgendamento,
+              intervalo: intervaloAgenda,
               dadosDocumento: { ...dadosBaseAgendamento, barbeiro: candidato.nome }
             })
             barbeiroFinalNome = candidato.nome
@@ -626,6 +681,8 @@ export default function Cliente({ servicos }) {
             barbeiro: barbeiroFinalNome,
             data: escolha.data,
             hora: escolha.hora,
+            duracaoMinutos: duracaoDoAgendamento,
+            intervalo: intervaloAgenda,
             dadosDocumento: { ...dadosBaseAgendamento, barbeiro: barbeiroFinalNome }
           })
         } catch (erroReserva) {

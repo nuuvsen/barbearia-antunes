@@ -155,7 +155,9 @@ export default function AdminClientes() {
         })
         await Promise.all(paraLiberar.map(d => {
           const dados = d.data()
-          return liberarHorario(dados.barbeiro, dados.data, dados.hora)
+          return liberarHorario(dados.barbeiro, dados.data, dados.hora, {
+            horariosExtras: (dados.horariosOcupados || []).slice(1)
+          })
         }))
 
         const batch = writeBatch(db)

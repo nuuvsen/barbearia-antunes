@@ -142,8 +142,11 @@ export default function PainelBarbeiro() {
           await updateDoc(doc(db, "agendamentos", item.id), { status: "Cancelado" });
 
           // Libera a trava de horário (ver bloqueioUtils.js) pra esse horário voltar a
-          // ficar disponível para agendamento.
-          await liberarHorario(item.barbeiro, item.data, item.hora);
+          // ficar disponível para agendamento. horariosExtras cobre os demais slots que esse
+          // agendamento também travava, quando o serviço durava mais de um slot da grade.
+          await liberarHorario(item.barbeiro, item.data, item.hora, {
+            horariosExtras: (item.horariosOcupados || []).slice(1)
+          });
 
           // Bug real encontrado: quando o cliente cancela o próprio agendamento pela
           // página dele (Cliente.jsx), o crédito de plano usado ao agendar é devolvido

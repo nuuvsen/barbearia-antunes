@@ -36,31 +36,95 @@ const gerarGrupoBloqueioId = () => `bloq_${Date.now()}_${Math.random().toString(
 export const gerarIdTravaHorario = (barbeiro, data, hora) =>
   `${String(barbeiro).replace(/\//g, '-')}_${data}_${hora}`
 
+// =========================================================================
+// DURAÇÃO DE SERVIÇO x GRADE DE HORÁRIOS
+// =========================================================================
+// Antes disso, o tempo de um serviço (cadastrado em AdminServicos.jsx) era só um texto
+// pra exibição — nada no agendamento em si reservava os horários seguintes, então um corte
+// de 1h marcado numa grade de 30 em 30 min deixava o horário seguinte livre pra outro cliente
+// marcar em cima, mesmo o barbeiro ainda estando ocupado. As funções abaixo convertem
+// hora <-> minutos e calculam quais horas de uma grade um atendimento realmente ocupa a
+// partir da duração (em minutos) do serviço escolhido.
+
+export const horaParaMinutos = (horaStr) => {
+  if (!horaStr) return 0
+  const [h, m] = String(horaStr).split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+export const minutosParaHora = (minutos) => {
+  const h = Math.floor(minutos / 60).toString().padStart(2, '0')
+  const m = (minutos % 60).toString().padStart(2, '0')
+  return `${h}:${m}`
+}
+
+// Quais horas da grade (de `intervalo` em `intervalo` minutos) um atendimento de
+// `duracaoMinutos` iniciado em `horaInicio` efetivamente ocupa. Sempre retorna pelo menos a
+// própria hora de início, mesmo se a duração/intervalo vierem inválidos — nunca "some" com o
+// horário que o agendamento realmente começa.
+export const calcularSlotsSpan = ({ horaInicio, duracaoMinutos, intervalo }) => {
+  const intervaloNum = Number(intervalo) || 30
+  const duracaoNum = Number(duracaoMinutos) || intervaloNum
+  const qtdSlots = Math.max(1, Math.ceil(duracaoNum / intervaloNum))
+  const inicioMin = horaParaMinutos(horaInicio)
+  const slots = []
+  for (let i = 0; i < qtdSlots; i++) {
+    slots.push(minutosParaHora(inicioMin + i * intervaloNum))
+  }
+  return slots
+}
+
+// Dois atendimentos (mesmo barbeiro/dia) se sobrepõem se o intervalo [início, início+duração)
+// de um cruzar o do outro — matemática padrão de sobreposição de intervalos.
+export const horariosSeSobrepoe = (horaA, duracaoA, horaB, duracaoB) => {
+  const inicioA = horaParaMinutos(horaA)
+  const fimA = inicioA + (Number(duracaoA) || 30)
+  const inicioB = horaParaMinutos(horaB)
+  const fimB = inicioB + (Number(duracaoB) || 30)
+  return inicioA < fimB && inicioB < fimA
+}
+
 // Reserva atomicamente um horário para um barbeiro específico: cria o documento (agendamento
 // ou bloqueio) e a trava do horário na mesma transação. Se o horário já estiver travado, NADA
 // é criado e é lançado um erro com `code: 'HORARIO_OCUPADO'` — quem chamar decide o que fazer
 // (tentar outro barbeiro, avisar a pessoa, etc.). Retorna o ID do documento criado.
-export const reservarHorario = async ({ barbeiro, data, hora, dadosDocumento, colecaoDestino = "agendamentos" }) => {
-  const idTrava = gerarIdTravaHorario(barbeiro, data, hora)
-  const travaRef = doc(db, "travasHorario", idTrava)
+//
+// Quando `duracaoMinutos` e `intervalo` são passados, e o serviço ocupa mais de uma hora da
+// grade, TODAS as horas que ele ocupa (calcularSlotsSpan) são travadas na MESMA transação —
+// ou o intervalo inteiro é reservado, ou nenhuma hora é criada (mesma garantia atômica de
+// sempre, só que agora cobrindo várias horas em vez de uma só). Sem esses dois parâmetros
+// (bloqueios manuais, atribuição da lista de espera), continua reservando só a hora exata,
+// exatamente como sempre funcionou.
+export const reservarHorario = async ({ barbeiro, data, hora, dadosDocumento, colecaoDestino = "agendamentos", duracaoMinutos, intervalo }) => {
+  const slots = (duracaoMinutos && intervalo) ? calcularSlotsSpan({ horaInicio: hora, duracaoMinutos, intervalo }) : [hora]
+  const travaRefs = slots.map(h => doc(db, "travasHorario", gerarIdTravaHorario(barbeiro, data, h)))
   const novoDocRef = doc(collection(db, colecaoDestino))
 
   await runTransaction(db, async (transaction) => {
-    const travaSnap = await transaction.get(travaRef)
-    if (travaSnap.exists()) {
+    // Toda leitura precisa acontecer antes de qualquer escrita numa transação do Firestore —
+    // por isso lê todas as travas candidatas primeiro, só depois decide o que escrever.
+    const travaSnaps = await Promise.all(travaRefs.map(ref => transaction.get(ref)))
+    if (travaSnaps.some(snap => snap.exists())) {
       const erro = new Error('Este horário acabou de ser ocupado.')
       erro.code = 'HORARIO_OCUPADO'
       throw erro
     }
-    transaction.set(travaRef, {
-      barbeiro,
-      data,
-      hora,
-      colecao: colecaoDestino,
-      agendamentoId: novoDocRef.id,
-      criadoEm: new Date().toISOString()
+    travaRefs.forEach((travaRef, i) => {
+      transaction.set(travaRef, {
+        barbeiro,
+        data,
+        hora: slots[i],
+        colecao: colecaoDestino,
+        agendamentoId: novoDocRef.id,
+        criadoEm: new Date().toISOString()
+      })
     })
-    transaction.set(novoDocRef, dadosDocumento)
+    transaction.set(novoDocRef, {
+      ...dadosDocumento,
+      // Só grava a lista de horas ocupadas quando o serviço realmente ocupa mais de uma —
+      // mantém os documentos antigos (1 hora só) do jeito que sempre foram.
+      ...(slots.length > 1 && { horariosOcupados: slots })
+    })
   })
 
   return novoDocRef.id
@@ -189,8 +253,18 @@ const atribuirCandidatoAoHorario = async ({ candidato, barbeiro, data, hora, sta
 // no rollback de uma reserva que acabou de ser desfeita por causa de outro horário do MESMO
 // bloqueio ter falhado — isso não é uma vaga real se abrindo, é o sistema desfazendo o que
 // ele mesmo acabou de criar, e não deve disparar avisos de lista de espera.
-export const liberarHorario = async (barbeiro, data, hora, { processarListaEspera = true } = {}) => {
+//
+// `horariosExtras` (novo, com a duração de serviço passando a ocupar mais de uma hora da
+// grade — ver reservarHorario/calcularSlotsSpan) são as DEMAIS horas que o MESMO agendamento
+// ocupava além da hora principal. Elas são sempre só liberadas (nunca oferecidas à lista de
+// espera individualmente — só a hora principal entra na fila), pra não fatiar um horário longo
+// que acabou de vagar em pedacinhos oferecidos separadamente pra pessoas diferentes.
+export const liberarHorario = async (barbeiro, data, hora, { processarListaEspera = true, horariosExtras = [] } = {}) => {
   if (!barbeiro || !data || !hora) return
+
+  const liberarExtras = () => Promise.all(
+    horariosExtras.map(h => deleteDoc(doc(db, "travasHorario", gerarIdTravaHorario(barbeiro, data, h))))
+  )
 
   if (processarListaEspera) {
     try {
@@ -244,7 +318,8 @@ export const liberarHorario = async (barbeiro, data, hora, { processarListaEsper
             console.error('Erro ao avisar cliente da lista de espera, mas o horário foi atribuído a ele:', errorBot)
           }
 
-          return // a trava não foi apagada — foi transferida pro candidato da lista de espera
+          await liberarExtras() // as horas extras (se houver) não foram transferidas, só a principal
+          return // a trava principal não foi apagada — foi transferida pro candidato da lista de espera
         }
       }
     } catch (erroListaEspera) {
@@ -254,7 +329,10 @@ export const liberarHorario = async (barbeiro, data, hora, { processarListaEsper
     }
   }
 
-  await deleteDoc(doc(db, "travasHorario", gerarIdTravaHorario(barbeiro, data, hora)))
+  await Promise.all([
+    deleteDoc(doc(db, "travasHorario", gerarIdTravaHorario(barbeiro, data, hora))),
+    liberarExtras()
+  ])
 }
 
 // Abre o formulário (De/Até/Motivo) para bloquear um intervalo de horários. Retorna

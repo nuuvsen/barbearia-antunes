@@ -4,8 +4,34 @@ import { collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot } from 'fireb
 import Swal from 'sweetalert2'
 import toast from 'react-hot-toast'
 
+// Formata minutos num texto legível ("40 min", "1h", "1h 30min") — mesma regra que
+// handleTempoChange usava antes, só que agora computada a partir do número, não digitada.
+const formatarDuracao = (minutos) => {
+  const total = Math.max(0, Math.round(Number(minutos) || 0))
+  if (total < 60) return `${total} min`
+  const horas = Math.floor(total / 60)
+  const restantes = total % 60
+  return restantes > 0 ? `${horas}h ${restantes}min` : `${horas}h`
+}
+
+// Serviços cadastrados antes desta atualização só tinham o texto livre "tempo" (ex:
+// "1h 30min"), sem nenhum número de minutos gravado. Ao abrir um desses pra editar, tenta
+// extrair um número de minutos razoável do texto antigo, em vez de abrir o campo zerado —
+// o valor final só é regravado de fato quando o usuário salvar o formulário de novo.
+const estimarMinutosDoTextoAntigo = (tempoStr) => {
+  if (!tempoStr) return 30
+  const strMin = String(tempoStr)
+  const horasMatch = strMin.match(/(\d+)\s*h/i)
+  const minMatch = strMin.match(/(\d+)\s*min/i)
+  if (horasMatch || minMatch) {
+    return (horasMatch ? parseInt(horasMatch[1], 10) * 60 : 0) + (minMatch ? parseInt(minMatch[1], 10) : 0)
+  }
+  const somenteNumero = parseInt(strMin.replace(/\D/g, ''), 10)
+  return isNaN(somenteNumero) || somenteNumero <= 0 ? 30 : somenteNumero
+}
+
 export default function AdminServicos({ servicos, aoMudar }) {
-  const [form, setForm] = useState({ id: null, nome: '', preco: '', tempo: '' })
+  const [form, setForm] = useState({ id: null, nome: '', preco: '', duracaoMinutos: 30 })
   const [carregando, setCarregando] = useState(false)
   const [configCores, setConfigCores] = useState(null)
 
@@ -35,63 +61,36 @@ export default function AdminServicos({ servicos, aoMudar }) {
     setForm({ ...form, preco: `R$ ${formatoMoeda}` });
   };
 
-  const handleTempoChange = (e) => {
-    const valorOriginal = e.target.value;
-
-    // Se o valor já tiver "h", permitimos que o usuário edite ou apague livremente.
-    // Isso evita o bug de transformar "1h 30" em "130 minutos" ao apagar uma letra.
-    if (valorOriginal.includes("h")) {
-      setForm({ ...form, tempo: valorOriginal });
-      return;
-    }
-
-    // Remove tudo que não for número
-    const apenasNumeros = valorOriginal.replace(/\D/g, "");
-
-    // Se não houver números (campo vazio), limpa o input
-    if (!apenasNumeros) {
-      setForm({ ...form, tempo: "" });
-      return;
-    }
-
-    const minutosTotais = parseInt(apenasNumeros, 10);
-
-    // Converte para horas se passar ou igualar a 60
-    if (minutosTotais >= 60) {
-      const horas = Math.floor(minutosTotais / 60);
-      const minutosRestantes = minutosTotais % 60;
-
-      if (minutosRestantes > 0) {
-        setForm({ ...form, tempo: `${horas}h ${minutosRestantes}min` });
-      } else {
-        setForm({ ...form, tempo: `${horas}h` });
-      }
-    } else {
-      setForm({ ...form, tempo: `${minutosTotais} min` });
-    }
-  };
   // --------------------------
+
+  // Abre um serviço existente pra edição, convertendo o texto antigo em minutos quando o
+  // registro ainda não tinha duracaoMinutos gravado (ver estimarMinutosDoTextoAntigo acima).
+  const iniciarEdicao = (servico) => {
+    setForm({
+      ...servico,
+      duracaoMinutos: servico.duracaoMinutos ?? estimarMinutosDoTextoAntigo(servico.tempo)
+    })
+  }
 
   const salvarServico = async (e) => {
     e.preventDefault()
     setCarregando(true)
     try {
+      const duracaoMinutos = Number(form.duracaoMinutos) || 30
+      const dadosServico = {
+        nome: form.nome,
+        preco: form.preco || "R$ 0,00", // Fallback padronizado (mesmo que na criação)
+        duracaoMinutos, // fonte da verdade — é o que agora bloqueia de fato os horários seguintes na agenda
+        tempo: formatarDuracao(duracaoMinutos) // texto de exibição, derivado do número acima
+      }
       if (form.id) {
-        await updateDoc(doc(db, "servicos", form.id), {
-          nome: form.nome,
-          preco: form.preco || "R$ 0,00", // Fallback padronizado (mesmo que na criação)
-          tempo: form.tempo || "30 min"   // Fallback padronizado
-        })
+        await updateDoc(doc(db, "servicos", form.id), dadosServico)
         toast.success("Serviço atualizado com sucesso!")
       } else {
-        await addDoc(collection(db, "servicos"), {
-          nome: form.nome,
-          preco: form.preco || "R$ 0,00", // Fallback padronizado
-          tempo: form.tempo || "30 min"   // Fallback padronizado
-        })
+        await addDoc(collection(db, "servicos"), dadosServico)
         toast.success("Serviço adicionado com sucesso!")
       }
-      setForm({ id: null, nome: '', preco: '', tempo: '' })
+      setForm({ id: null, nome: '', preco: '', duracaoMinutos: 30 })
       aoMudar()
     } catch (error) {
       console.error("Erro:", error)
@@ -170,7 +169,7 @@ export default function AdminServicos({ servicos, aoMudar }) {
                       </span>
                     </td>
                     <td className="p-5 text-right space-x-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => setForm(s)} className="p-2 rounded-lg transition-all hover:scale-110"
+                      <button onClick={() => iniciarEdicao(s)} className="p-2 rounded-lg transition-all hover:scale-110"
                               style={{ backgroundColor: configCores?.fundo || 'var(--cor-bg-botao)', color: configCores?.texto || 'var(--cor-texto-principal)' }}>
                         ✏️
                       </button>
@@ -237,23 +236,49 @@ export default function AdminServicos({ servicos, aoMudar }) {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase tracking-widest ml-2" 
+                <label className="text-[10px] font-black uppercase tracking-widest ml-2"
                        style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
-                  Tempo
+                  Duração (minutos)
                 </label>
-                <input 
-                  value={form.tempo} 
-                  onChange={handleTempoChange} 
-                  placeholder="30 min" 
+                <input
+                  value={form.duracaoMinutos}
+                  onChange={e => setForm({ ...form, duracaoMinutos: e.target.value.replace(/\D/g, '') })}
+                  placeholder="30"
+                  type="text"
+                  inputMode="numeric"
                   className="w-full border p-4 rounded-2xl outline-none transition-all focus:ring-2"
-                  style={{ 
-                    backgroundColor: configCores?.fundo || 'var(--cor-input-bg)', 
-                    borderColor: configCores?.borda || 'var(--cor-borda)', 
-                    color: configCores?.texto || 'var(--cor-texto-principal)' 
+                  style={{
+                    backgroundColor: configCores?.fundo || 'var(--cor-input-bg)',
+                    borderColor: configCores?.borda || 'var(--cor-borda)',
+                    color: configCores?.texto || 'var(--cor-texto-principal)'
                   }}
                 />
               </div>
             </div>
+
+            {/* Ajuste rápido pros tempos mais comuns — evita ter que apagar e digitar o
+                número toda vez. Esse tempo agora reserva de verdade os horários seguintes
+                na agenda (ver bloqueioUtils.js), então vale a pena deixar fácil de acertar. */}
+            <div className="flex flex-wrap gap-2">
+              {[20, 30, 40, 60, 90].map(min => (
+                <button
+                  key={min}
+                  type="button"
+                  onClick={() => setForm({ ...form, duracaoMinutos: min })}
+                  className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border transition-all"
+                  style={{
+                    backgroundColor: Number(form.duracaoMinutos) === min ? (configCores?.primaria || 'var(--cor-primaria)') : 'transparent',
+                    color: Number(form.duracaoMinutos) === min ? '#fff' : (configCores?.textoSecundario || 'var(--cor-texto-secundario)'),
+                    borderColor: configCores?.borda || 'var(--cor-borda)'
+                  }}
+                >
+                  {formatarDuracao(min)}
+                </button>
+              ))}
+            </div>
+            <p className="text-[9px] font-bold opacity-50 -mt-2 ml-2" style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
+              Esse tempo passa a ocupar de verdade os horários seguintes na Agenda — um corte de 1h bloqueia os próximos 30/40min pro mesmo barbeiro.
+            </p>
 
             <button 
               type="submit" 
@@ -268,7 +293,7 @@ export default function AdminServicos({ servicos, aoMudar }) {
             </button>
 
             {form.id && (
-              <button type="button" onClick={() => setForm({id:null, nome:'', preco:'', tempo:''})} 
+              <button type="button" onClick={() => setForm({id:null, nome:'', preco:'', duracaoMinutos: 30})}
                       className="w-full text-xs font-bold mt-2 hover:underline"
                       style={{ color: configCores?.textoSecundario || 'var(--cor-texto-secundario)' }}>
                 Cancelar Edição

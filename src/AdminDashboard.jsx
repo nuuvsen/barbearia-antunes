@@ -144,9 +144,13 @@ export default function AdminDashboard({ totalServicos }) {
           await updateDoc(doc(db, ehComanda ? "comandas" : "agendamentos", item.id), { status: "Cancelado" });
 
           // Libera a trava de horário (ver bloqueioUtils.js) — comandas não passam por essa
-          // trava (não reservam data/hora futura), só agendamentos reais.
+          // trava (não reservam data/hora futura), só agendamentos reais. horariosExtras
+          // cobre os demais slots que esse agendamento também travava, quando o serviço
+          // durava mais de um slot da grade.
           if (!ehComanda) {
-            await liberarHorario(item.barbeiro, item.data, item.hora);
+            await liberarHorario(item.barbeiro, item.data, item.hora, {
+              horariosExtras: (item.horariosOcupados || []).slice(1)
+            });
           }
 
           // Bug real encontrado: quando o cliente cancela o próprio agendamento pela

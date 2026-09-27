@@ -4,7 +4,7 @@ import { collection, query, where, getDocs, updateDoc, doc, increment, onSnapsho
 import { CalendarDays, Clock, UserCheck, Trash2, User, ChevronLeft, ChevronRight, Lock, Unlock, Ban, Users, X, RefreshCw, Plus, CheckCircle2, Save } from 'lucide-react'
 import Swal from 'sweetalert2'
 import toast from 'react-hot-toast'
-import { ehBloqueio, removerBloqueio, liberarHorario, listarListaEsperaAtiva, sairDaListaEspera } from './bloqueioUtils'
+import { ehBloqueio, removerBloqueio, liberarHorario, listarListaEsperaAtiva, sairDaListaEspera, horariosSeSobrepoe } from './bloqueioUtils'
 import { concluirAtendimento } from './atendimentoUtils'
 import AdminPagamento from './AdminPagamento'
 import Carregando from './Carregando'
@@ -256,8 +256,11 @@ export default function AdminAgenda() {
         await updateDoc(doc(db, "agendamentos", id), { status: "Cancelado" });
 
         // Libera a trava de horário (ver bloqueioUtils.js) pra esse horário voltar a
-        // ficar disponível para agendamento.
-        await liberarHorario(item.barbeiro, item.data, item.hora);
+        // ficar disponível para agendamento. horariosExtras cobre os demais slots que esse
+        // agendamento também travava, quando o serviço durava mais de um slot da grade.
+        await liberarHorario(item.barbeiro, item.data, item.hora, {
+          horariosExtras: (item.horariosOcupados || []).slice(1)
+        });
 
         // Bug real encontrado: quando o cliente cancela o próprio agendamento pela página
         // dele (Cliente.jsx), o crédito de plano usado ao agendar é devolvido
@@ -485,7 +488,7 @@ export default function AdminAgenda() {
   // barbeiro sem cancelar e recriar. Sempre pede confirmacao antes de gravar, ja que e facil
   // soltar num slot errado sem querer.
   const moverAgendamento = async (dadosArrastados, destino) => {
-    const { id, horaAtual, barbeiroAtual, dataAtual, clienteNome: clienteArrastado } = dadosArrastados;
+    const { id, horaAtual, barbeiroAtual, dataAtual, clienteNome: clienteArrastado, duracao: duracaoArrastada } = dadosArrastados;
     const barbeiroDestino = destino.barbeiro || barbeiroAtual;
     const semMudanca = destino.hora === horaAtual && barbeiroDestino === barbeiroAtual && destino.data === dataAtual;
     if (semMudanca) return;
@@ -494,6 +497,17 @@ export default function AdminAgenda() {
     // diretamente, nunca deixa um corte cair num horário que já passou.
     if (horarioJaPassou(destino.data, destino.hora)) {
       toast.error('Não é possível mover um corte para um horário que já passou.');
+      return;
+    }
+
+    // Checa se o corte (com a duração que ele já tinha) cabe no destino sem colidir com outro
+    // atendimento do barbeiro de lá — antes disso, arrastar um corte de 1h pra cima de um
+    // horário aparentemente vago não via que ele estourava em cima do próximo já marcado.
+    const duracaoMovida = Number(duracaoArrastada) || 30
+    const ocupacoesDestino = await buscarOcupacoesDoBarbeiro(barbeiroDestino, destino.data, id)
+    const conflito = ocupacoesDestino.find(o => horariosSeSobrepoe(destino.hora, duracaoMovida, o.hora, o.duracao))
+    if (conflito) {
+      toast.error(`Esse horário colide com outro atendimento de ${barbeiroDestino} às ${conflito.hora}.`);
       return;
     }
 
@@ -536,7 +550,8 @@ export default function AdminAgenda() {
       horaAtual: item.hora,
       barbeiroAtual: item.barbeiro,
       dataAtual: item.data,
-      clienteNome: item.clienteNome
+      clienteNome: item.clienteNome,
+      duracao: item.duracao
     }));
   }
 
@@ -566,6 +581,27 @@ export default function AdminAgenda() {
     })
   }
 
+  // Duração (minutos) de um serviço do catálogo pelo nome — usada tanto pra gravar no
+  // agendamento (o card na grade já sabe desenhar essa altura, ver calcularHeight mais abaixo)
+  // quanto pra checar sobreposição antes de salvar. Planos não têm duração cadastrada; cai no
+  // mesmo padrão de 30min que a grade sempre assumiu pra tudo antes desta atualização.
+  const duracaoDoNomeServico = (nomeServico) => {
+    const s = servicosDisponiveis.find(sv => sv.nome === nomeServico)
+    return s ? (Number(s.duracaoMinutos) || 30) : 30
+  }
+
+  // Busca sob demanda os atendimentos ativos (não cancelados) de um barbeiro num dia — feito
+  // na hora de salvar/mover em vez de reaproveitar o estado `agendamentos` já carregado, porque
+  // o admin pode trocar barbeiro/data dentro do próprio modal pra algo fora da visualização
+  // atual. `ignorarId` exclui o próprio agendamento sendo movido da checagem.
+  const buscarOcupacoesDoBarbeiro = async (barbeiro, dataISO, ignorarId) => {
+    const q = query(collection(db, "agendamentos"), where("barbeiro", "==", barbeiro), where("data", "==", dataISO))
+    const snap = await getDocs(q)
+    return snap.docs
+      .filter(d => d.id !== ignorarId && d.data().status !== 'Cancelado')
+      .map(d => { const dados = d.data(); return { hora: dados.hora, duracao: Number(dados.duracao) || 30 } })
+  }
+
   const salvarNovoAgendamento = async () => {
     if (!formNovo.clienteNome.trim() || !formNovo.servico || !formNovo.barbeiro) {
       Swal.fire({ title: 'Faltou algo', text: 'Preencha ao menos cliente, serviço e barbeiro.', icon: 'warning', confirmButtonColor: 'var(--cor-primaria)' })
@@ -579,6 +615,25 @@ export default function AdminAgenda() {
     }
     setSalvandoNovo(true)
     try {
+      const duracaoNovo = duracaoDoNomeServico(formNovo.servico)
+
+      // Checa sobreposição de verdade contra o que já existe pra esse barbeiro naquele dia —
+      // a grade evita a maioria dos cliques em cima de um corte já visível, mas o admin pode
+      // trocar barbeiro/data/hora livremente dentro do modal, então essa é a checagem que
+      // realmente vale antes de gravar.
+      const ocupacoes = await buscarOcupacoesDoBarbeiro(formNovo.barbeiro, formNovo.data)
+      const conflito = ocupacoes.find(o => horariosSeSobrepoe(formNovo.hora, duracaoNovo, o.hora, o.duracao))
+      if (conflito) {
+        Swal.fire({
+          title: 'Horário ocupado',
+          text: `Esse corte (${duracaoNovo}min) colide com outro atendimento de ${formNovo.barbeiro} às ${conflito.hora}. Escolha outro horário ou barbeiro.`,
+          icon: 'warning',
+          confirmButtonColor: 'var(--cor-primaria)'
+        })
+        setSalvandoNovo(false)
+        return
+      }
+
       await addDoc(collection(db, "agendamentos"), {
         clienteNome: formNovo.clienteNome,
         clienteTelefone: formNovo.clienteTelefone,
@@ -587,6 +642,7 @@ export default function AdminAgenda() {
         barbeiro: formNovo.barbeiro,
         data: formNovo.data,
         hora: formNovo.hora,
+        duracao: duracaoNovo,
         observacoes: formNovo.observacoes,
         status: 'Agendado'
       })
